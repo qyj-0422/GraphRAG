@@ -1,5 +1,6 @@
 import re
 import asyncio
+import json
 from collections import defaultdict, Counter
 from typing import Union, Any
 from Core.Graph.BaseGraph import BaseGraph
@@ -71,13 +72,14 @@ class ERGraph(BaseGraph):
                 self.er_graph._cluster_data_to_subgraphs(cluster_node_map)
                 await community_ins._generate_community_report_(self.er_graph)
                 logger.info("[Community Report]  Finished")
-                self.query_config = query_config
-                # await self.global_query("who are you", community_ins)
-                await self.local_query("who are you", community_ins)
-            #TODO: persistent   
+          
+        
             # # ---------- commit upsertings and indexing
             # await self.full_docs.upsert(new_docs)
-            # await self.text_chunks.upsert(inserting_chunks)
+            await self.text_chunks.upsert(inserting_chunks)
+            self.query_config = query_config
+                # await self.global_query("who are you", community_ins)
+            await self.local_query("who are you", community_ins)
         finally:
             logger.info("Consturcting graph finisihed")
 
@@ -112,13 +114,9 @@ class ERGraph(BaseGraph):
     async def local_query(self, query:str, community_instance):
         context = await self._build_local_query_context(
             query,
-            knowledge_graph_inst,
-            entities_vdb,
-            community_reports,
-            text_chunks_db,
-            query_param,
+            community_instance.community_reports
         )
-        if query_param.only_need_context:
+        if self.config.only_need_context:
             return context
         if context is None:
             return QueryPrompt.FAIL_RESPONSE
@@ -132,32 +130,28 @@ class ERGraph(BaseGraph):
         )
         return response
     
-    async def _build_local_query_context(self, query):
-        results = await self.entities_vdb.query(query, top_k=query_param.top_k)
+    async def _build_local_query_context(self, query,  community_reports):
+        results = await self.entity_vdb.retrieval(query, top_k=self.query_config.top_k)
+        import pdb
+        pdb.set_trace()
         if not len(results):
             return None
         node_datas = await asyncio.gather(
-            *[knowledge_graph_inst.get_node(r["entity_name"]) for r in results]
+            *[self.er_graph.get_node(r.metadata["entity_name"]) for r in results]
         )
         if not all([n is not None for n in node_datas]):
             logger.warning("Some nodes are missing, maybe the storage is damaged")
         node_degrees = await asyncio.gather(
-            *[knowledge_graph_inst.node_degree(r["entity_name"]) for r in results]
+            *[self.er_graph.node_degree(r.metadata["entity_name"]) for r in results]
         )
         node_datas = [
             {**n, "entity_name": k["entity_name"], "rank": d}
             for k, n, d in zip(results, node_datas, node_degrees)
             if n is not None
         ]
-        use_communities = await _find_most_related_community_from_entities(
-            node_datas, query_param, community_reports
-        )
-        use_text_units = await _find_most_related_text_unit_from_entities(
-            node_datas, query_param, text_chunks_db, knowledge_graph_inst
-        )
-        use_relations = await _find_most_related_edges_from_entities(
-            node_datas, query_param, knowledge_graph_inst
-        )
+        use_communities = await self._find_most_related_community_from_entities(node_datas, community_reports)
+        use_text_units = await self._find_most_related_text_unit_from_entities(node_datas)
+        use_relations = await self._find_most_related_edges_from_entities(node_datas)
         logger.info(
             f"Using {len(node_datas)} entites, {len(use_communities)} communities, {len(use_relations)} relations, {len(use_text_units)} text units"
         )
@@ -217,6 +211,129 @@ class ERGraph(BaseGraph):
             {text_units_context}
             ```
             """
+    async def _find_most_related_community_from_entities(self, node_datas: list[dict], community_reports):
+        related_communities = []
+        for node_d in node_datas:
+            if "clusters" not in node_d:
+                continue
+            related_communities.extend(json.loads(node_d["clusters"]))
+        related_community_dup_keys = [
+            str(dp["cluster"])
+            for dp in related_communities
+            if dp["level"] <= self.query_config.level
+        ]
+        related_community_keys_counts = dict(Counter(related_community_dup_keys))
+        _related_community_datas = await asyncio.gather(
+            *[community_reports.get_by_id(k) for k in related_community_keys_counts.keys()]
+        )
+        related_community_datas = {
+            k: v
+            for k, v in zip(related_community_keys_counts.keys(), _related_community_datas)
+            if v is not None
+        }
+        related_community_keys = sorted(
+            related_community_keys_counts.keys(),
+            key=lambda k: (
+                related_community_keys_counts[k],
+                related_community_datas[k]["report_json"].get("rating", -1),
+            ),
+            reverse=True,
+        )
+        sorted_community_datas = [
+            related_community_datas[k] for k in related_community_keys
+        ]
+
+        use_community_reports = truncate_list_by_token_size(
+            sorted_community_datas,
+            key=lambda x: x["report_string"],
+            max_token_size= self.query_config.local_max_token_for_community_report,
+        )
+        if self.query_config.local_community_single_one:
+            use_community_reports = use_community_reports[:1]
+        return use_community_reports
+    async def _find_most_related_text_unit_from_entities(self, node_datas: list[dict]):
+        text_units = [
+        split_string_by_multi_markers(dp["source_id"], [GRAPH_FIELD_SEP])
+            for dp in node_datas
+        ]
+        edges = await asyncio.gather(
+            *[self.er_graph.get_node_edges(dp["entity_name"]) for dp in node_datas]
+        )
+        all_one_hop_nodes = set()
+        for this_edges in edges:
+            if not this_edges:
+                continue
+            all_one_hop_nodes.update([e[1] for e in this_edges])
+        all_one_hop_nodes = list(all_one_hop_nodes)
+        all_one_hop_nodes_data = await asyncio.gather(
+            *[self.er_grap.get_node(e) for e in all_one_hop_nodes]
+        )
+        all_one_hop_text_units_lookup = {
+            k: set(split_string_by_multi_markers(v["source_id"], [GRAPH_FIELD_SEP]))
+            for k, v in zip(all_one_hop_nodes, all_one_hop_nodes_data)
+            if v is not None
+        }
+        all_text_units_lookup = {}
+        for index, (this_text_units, this_edges) in enumerate(zip(text_units, edges)):
+            for c_id in this_text_units:
+                if c_id in all_text_units_lookup:
+                    continue
+                relation_counts = 0
+                for e in this_edges:
+                    if (
+                        e[1] in all_one_hop_text_units_lookup
+                        and c_id in all_one_hop_text_units_lookup[e[1]]
+                    ):
+                        relation_counts += 1
+                all_text_units_lookup[c_id] = {
+                    "data": await self.text_chunks.get_by_id(c_id),
+                    "order": index,
+                    "relation_counts": relation_counts,
+                }
+        if any([v is None for v in all_text_units_lookup.values()]):
+            logger.warning("Text chunks are missing, maybe the storage is damaged")
+        all_text_units = [
+            {"id": k, **v} for k, v in all_text_units_lookup.items() if v is not None
+        ]
+        all_text_units = sorted(
+            all_text_units, key=lambda x: (x["order"], -x["relation_counts"])
+        )
+        all_text_units = truncate_list_by_token_size(
+            all_text_units,
+            key=lambda x: x["data"]["content"],
+            max_token_size = self.query_config.local_max_token_for_text_unit,
+        )
+        all_text_units = [t["data"] for t in all_text_units]
+        return all_text_units
+    
+    async def _find_most_related_edges_from_entities(self, node_datas: list[dict]):
+        all_related_edges = await asyncio.gather(
+            *[self.er_graph.get_node_edges(dp["entity_name"]) for dp in node_datas]
+        )
+        all_edges = set()
+        for this_edges in all_related_edges:
+            all_edges.update([tuple(sorted(e)) for e in this_edges])
+        all_edges = list(all_edges)
+        all_edges_pack = await asyncio.gather(
+            *[self.er_graph.get_edge(e[0], e[1]) for e in all_edges]
+        )
+        all_edges_degree = await asyncio.gather(
+            *[self.er_graph.edge_degree(e[0], e[1]) for e in all_edges]
+        )
+        all_edges_data = [
+            {"src_tgt": k, "rank": d, **v}
+            for k, v, d in zip(all_edges, all_edges_pack, all_edges_degree)
+            if v is not None
+        ]
+        all_edges_data = sorted(
+            all_edges_data, key=lambda x: (x["rank"], x["weight"]), reverse=True
+        )
+        all_edges_data = truncate_list_by_token_size(
+            all_edges_data,
+            key=lambda x: x["description"],
+            max_token_size= self.query_config.local_max_token_for_local_context,
+        )
+        return all_edges_data
     async def _map_global_communities(
             self,
             query: str,
@@ -444,8 +561,6 @@ class ERGraph(BaseGraph):
                 for dp in entities
             }
             await self.entity_vdb.upsert(data_for_vdb)
-        import pdb
-        pdb.set_trace()
         await asyncio.gather(*[self._merge_edges_then_upsert(k[0], k[1], v) for k, v in maybe_edges.items()])
 
     async def _merge_nodes_then_upsert(self, entity_name: str, nodes_data: list[Entity]):

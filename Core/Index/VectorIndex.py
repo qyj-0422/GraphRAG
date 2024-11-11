@@ -33,19 +33,31 @@ class VectorIndex():
         self._index = get_index(self.config)
 
 
-    async def upsert(self, list_data: list[Any]):
-        if len(list_data) == 0:
+    async def upsert(self, data: list[Any]):
+        if len(data) == 0:
             logger.warning("No data needs to insert into the vector database")
             return 
-        
-        if isinstance(list_data[0], Document):
-            await self._update_index_from_documents(list_data)
-        elif isinstance(list_data[0], BaseNode):
-            self._update_index_from_nodes(list_data)
-        elif isinstance(list_data[0], str):
-            documents = [Document(text = t, key = mdhash_id(t)) for t in list_data]
+        if isinstance(data, dict):
+            logger.info(f"Start inserting {len(data)} documents into the vector database")
+            list_data = [
+            {
+                "__id__": k,
+                **{k1: v1 for k1, v1 in v.items()},
+            }
+            for k, v in data.items()
+            ]
+            documents = [Document(text = t['content'], doc_id = t['__id__'], metadata = {"entity_name": t['entity_name']}, excluded_embed_metadata_keys=["entity_name"]) for t in list_data]
             await self._update_index_from_documents(documents)
-    
+
+        elif isinstance(data[0], Document):
+            await self._update_index_from_documents(data)
+        elif isinstance(data[0], BaseNode):
+            self._update_index_from_nodes(data)
+        elif isinstance(data[0], str):
+            documents = [Document(text = t, key = mdhash_id(t)) for t in data]
+            await self._update_index_from_documents(documents)
+        else:
+            logger.warning("The type of data is not supported")
     def exist_index(self):
         
         return os.path.exists(self.config.persist_path)
