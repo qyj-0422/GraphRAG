@@ -648,6 +648,48 @@ class ERGraph(BaseGraph):
         )
 
     # 
+
+
+    async def local_query_lightrag(
+        self,
+        query
+    ) -> str:
+        context = None
+        # use_model_func = global_config["llm_model_func"]
+        kw_prompt = QueryPrompt.KEYWORDS_EXTRACTION.format(query=query)
+        result = await self.llm.aask(kw_prompt)
+
+    
+        keywords_data = prase_json_from_response(result)
+        keywords = keywords_data.get("low_level_keywords", [])
+        keywords = ", ".join(keywords)
+   
+        if keywords:
+            context = await self._build_local_query_context_with_keywords(keywords)
+        if self.query_config.only_need_context:
+            return context
+        if context is None:
+            return QueryPrompt.FAIL_RESPONSE
+        sys_prompt_temp = QueryPrompt.RAG_RESPONSE
+        sys_prompt = sys_prompt_temp.format(
+            context_data=context, response_type= self.query_config.response_type
+        )
+        response = await self.llm.aask(
+            query,
+            system_msgs=[sys_prompt]
+        )
+        if len(response) > len(sys_prompt):
+            response = (
+                response.replace(sys_prompt, "")
+                .replace("user", "")
+                .replace("model", "")
+                .replace(query, "")
+                .replace("<system>", "")
+                .replace("</system>", "")
+                .strip()
+            )
+
+        return response
     def _extract_node(self):
         pass
 
@@ -658,4 +700,75 @@ class ERGraph(BaseGraph):
         pass
 
 
-    
+    async def _build_local_query_context_with_keywords(self, query):
+        results = await self.entity_vdb.retrieval(query, top_k=self.query_config.top_k)
+
+        if not len(results):
+            return None
+        node_datas = await asyncio.gather(
+            *[self.er_graph.get_node(r["entity_name"]) for r in results]
+        )
+        if not all([n is not None for n in node_datas]):
+            logger.warning("Some nodes are missing, maybe the storage is damaged")
+        node_degrees = await asyncio.gather(
+            *[self.er_graph.node_degree(r["entity_name"]) for r in results]
+        )
+        node_datas = [
+            {**n, "entity_name": k["entity_name"], "rank": d}
+            for k, n, d in zip(results, node_datas, node_degrees)
+            if n is not None
+        ]  
+        # what is this text_chunks_db doing.  dont remember it in airvx.  check the diagram.
+        use_text_units = await self._find_most_related_text_unit_from_entities(node_datas)
+        use_relations = await self._find_most_related_edges_from_entities(node_datas)
+        logger.info(
+            f"Local query uses {len(node_datas)} entites, {len(use_relations)} relations, {len(use_text_units)} text units"
+        )
+        entites_section_list = [["id", "entity", "type", "description", "rank"]]
+        for i, n in enumerate(node_datas):
+            entites_section_list.append(
+                [
+                    i,
+                    n["entity_name"],
+                    n.get("entity_type", "UNKNOWN"),
+                    n.get("description", "UNKNOWN"),
+                    n["rank"],
+                ]
+            )
+        entities_context = list_to_quoted_csv_string(entites_section_list)
+
+        relations_section_list = [
+            ["id", "source", "target", "description", "keywords", "weight", "rank"]
+        ]
+        for i, e in enumerate(use_relations):
+            relations_section_list.append(
+                [
+                    i,
+                    e["src_tgt"][0],
+                    e["src_tgt"][1],
+                    e["description"],
+                    e["keywords"],
+                    e["weight"],
+                    e["rank"],
+                ]
+            )
+        relations_context = list_to_quoted_csv_string(relations_section_list)
+
+        text_units_section_list = [["id", "content"]]
+        for i, t in enumerate(use_text_units):
+            text_units_section_list.append([i, t["content"]])
+        text_units_context = list_to_quoted_csv_string(text_units_section_list)
+        return f"""
+            -----Entities-----
+            ```csv
+            {entities_context}
+            ```
+            -----Relationships-----
+            ```csv
+            {relations_context}
+            ```
+            -----Sources-----
+            ```csv
+            {text_units_context}
+            ```
+        """
