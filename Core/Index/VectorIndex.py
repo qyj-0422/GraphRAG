@@ -8,40 +8,16 @@ Here is the vector index for our GraphRAG
     2. load index from documents
     3. load index from nodes
 """
-
 from Core.Common.Logger import logger
 import os
-from typing import Any, Optional, Union
-
-from llama_index.core.callbacks.base import CallbackManager
-from llama_index.core.embeddings import BaseEmbedding
-from llama_index.core.embeddings.mock_embed_model import MockEmbedding
-from llama_index.core.indices.base import BaseIndex
-from llama_index.core.readers.base import BaseReader
-from llama_index.core import StorageContext, load_index_from_storage, VectorStoreIndex, Settings
-from Core.Common.EmbConfig import EmbeddingConfig
+from typing import Any
 from llama_index.core.retrievers import BaseRetriever
 from llama_index.core.schema import (
     BaseNode,
-    Document,
-    NodeWithScore,
-    QueryType,
+    Document
 )
-
-# from C.config2 import config
-from Core.Index import (
-    get_rag_embedding,
-    get_index
-)    
-from metagpt.rag.interface import NoEmbedding
-from metagpt.rag.retrievers.base import ModifiableRAGRetriever, PersistableRAGRetriever
-from metagpt.rag.retrievers.hybrid_retriever import SimpleHybridRetriever
-# from metagpt.rag.schema import (
-#     BaseIndexConfig,
-#     BaseRetrieverConfig,
-#     BM25RetrieverConfig
-# )
-
+from Core.Index import get_index
+from Core.Common.Utils import mdhash_id
 
 class VectorIndex():
     """VectorIndex is designed to be simple and straightforward.
@@ -54,19 +30,22 @@ class VectorIndex():
     ) -> None:
         self._index = None
         self.config = config
-  
-    def build_index(self):
-
-
-    
-
         self._index = get_index(self.config)
-            # return self.index
-        self._update_index(["world", "hello", "your father"])
-        self._storage_index()
 
-   
-  
+
+    async def upsert(self, list_data: list[Any]):
+        if len(list_data) == 0:
+            logger.warning("No data needs to insert into the vector database")
+            return 
+        
+        if isinstance(list_data[0], Document):
+            await self._update_index_from_documents(list_data)
+        elif isinstance(list_data[0], BaseNode):
+            self._update_index_from_nodes(list_data)
+        elif isinstance(list_data[0], str):
+            documents = [Document(text = t, key = mdhash_id(t)) for t in list_data]
+            await self._update_index_from_documents(documents)
+    
     def exist_index(self):
         
         return os.path.exists(self.config.persist_path)
@@ -78,14 +57,6 @@ class VectorIndex():
         nodes = await retriever.aretrieve(query)
         return nodes
 
-    def _update_index(self, list_data: list[Any],type = "document"):
-        if type == "document":
-            documents = [Document(text=t) for t in list_data]
-
-            self._update_index_from_documents(documents)
-        elif type == "node":
-            self._update_index_from_nodes(list_data)
-        pass
 
     def _get_retrieve_top_k(self):
         return self.retriever_configs.top_k
@@ -95,7 +66,7 @@ class VectorIndex():
 
 
 
-    def _update_index_from_documents(self, docs: list[Any]):
+    async def _update_index_from_documents(self, docs: list[Any]):
         refreshed_docs = self._index.refresh_ref_docs(docs)
 
         # the number of docs that are refreshed. if True in refreshed_docs, it means the doc is refreshed.

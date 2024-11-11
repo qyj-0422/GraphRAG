@@ -10,7 +10,8 @@ from Core.Common.Utils import (
     is_float_regex,
     list_to_quoted_csv_string,
     prase_json_from_response,
-    truncate_list_by_token_size
+    truncate_list_by_token_size,
+    mdhash_id
 )
 from Core.Schema.ChunkSchema import TextChunk
 from Core.Schema.Message import Message
@@ -30,13 +31,25 @@ from Core.Community.ClusterFactory import get_community_instance
 from Core.Common.QueryConfig import QueryConfig
 from Core.Prompt import QueryPrompt
 from Core.Common.QueryConfig import query_config
-
+from metagpt.provider.llm_provider_registry import create_llm_instance
+from pydantic import model_validator
+from Core.Index import (
+    get_rag_embedding
+)    
+from Core.Index.Schema import (
+    FAISSIndexConfig
+)
+from Core.Index.VectorIndex import VectorIndex
 class ERGraph(BaseGraph):
    
     text_chunks: JsonKVStorage = JsonKVStorage()
     er_graph: NetworkXStorage = NetworkXStorage()
     
-
+    @model_validator(mode="after")
+    def _init_vectordb(cls, data):
+        index_config = FAISSIndexConfig(persist_path="./storage", embed_model=get_rag_embedding())
+        cls.entity_vdb = VectorIndex(index_config)
+        return data
 
     async def _construct_graph(self, chunks: dict[str, TextChunk]):
         try:
@@ -58,7 +71,9 @@ class ERGraph(BaseGraph):
                 self.er_graph._cluster_data_to_subgraphs(cluster_node_map)
                 await community_ins._generate_community_report_(self.er_graph)
                 logger.info("[Community Report]  Finished")
-                await self.global_query("who are you", community_ins)
+                self.query_config = query_config
+                # await self.global_query("who are you", community_ins)
+                await self.local_query("who are you", community_ins)
             #TODO: persistent   
             # # ---------- commit upsertings and indexing
             # await self.full_docs.upsert(new_docs)
@@ -94,8 +109,114 @@ class ERGraph(BaseGraph):
             raise ValueError(f"Unknown mode {param.mode}")
         # await self._query_done()
         return response
-    async def local_query():
-        pass
+    async def local_query(self, query:str, community_instance):
+        context = await self._build_local_query_context(
+            query,
+            knowledge_graph_inst,
+            entities_vdb,
+            community_reports,
+            text_chunks_db,
+            query_param,
+        )
+        if query_param.only_need_context:
+            return context
+        if context is None:
+            return QueryPrompt.FAIL_RESPONSE
+        sys_prompt_temp = QueryPrompt.LOCAL_RAG_RESPONSE
+        sys_prompt = sys_prompt_temp.format(
+            context_data=context, response_type = self.query_config.response_type
+        )
+        response = await self.llm.aask(
+            query,
+            system_msgs = [sys_prompt]
+        )
+        return response
+    
+    async def _build_local_query_context(self, query):
+        results = await self.entities_vdb.query(query, top_k=query_param.top_k)
+        if not len(results):
+            return None
+        node_datas = await asyncio.gather(
+            *[knowledge_graph_inst.get_node(r["entity_name"]) for r in results]
+        )
+        if not all([n is not None for n in node_datas]):
+            logger.warning("Some nodes are missing, maybe the storage is damaged")
+        node_degrees = await asyncio.gather(
+            *[knowledge_graph_inst.node_degree(r["entity_name"]) for r in results]
+        )
+        node_datas = [
+            {**n, "entity_name": k["entity_name"], "rank": d}
+            for k, n, d in zip(results, node_datas, node_degrees)
+            if n is not None
+        ]
+        use_communities = await _find_most_related_community_from_entities(
+            node_datas, query_param, community_reports
+        )
+        use_text_units = await _find_most_related_text_unit_from_entities(
+            node_datas, query_param, text_chunks_db, knowledge_graph_inst
+        )
+        use_relations = await _find_most_related_edges_from_entities(
+            node_datas, query_param, knowledge_graph_inst
+        )
+        logger.info(
+            f"Using {len(node_datas)} entites, {len(use_communities)} communities, {len(use_relations)} relations, {len(use_text_units)} text units"
+        )
+        entites_section_list = [["id", "entity", "type", "description", "rank"]]
+        for i, n in enumerate(node_datas):
+            entites_section_list.append(
+                [
+                    i,
+                    n["entity_name"],
+                    n.get("entity_type", "UNKNOWN"),
+                    n.get("description", "UNKNOWN"),
+                    n["rank"],
+                ]
+            )
+        entities_context = list_to_quoted_csv_string(entites_section_list)
+
+        relations_section_list = [
+            ["id", "source", "target", "description", "weight", "rank"]
+        ]
+        for i, e in enumerate(use_relations):
+            relations_section_list.append(
+                [
+                    i,
+                    e["src_tgt"][0],
+                    e["src_tgt"][1],
+                    e["description"],
+                    e["weight"],
+                    e["rank"],
+                ]
+            )
+        relations_context = list_to_quoted_csv_string(relations_section_list)
+
+        communities_section_list = [["id", "content"]]
+        for i, c in enumerate(use_communities):
+            communities_section_list.append([i, c["report_string"]])
+        communities_context = list_to_quoted_csv_string(communities_section_list)
+
+        text_units_section_list = [["id", "content"]]
+        for i, t in enumerate(use_text_units):
+            text_units_section_list.append([i, t["content"]])
+        text_units_context = list_to_quoted_csv_string(text_units_section_list)
+        return f"""
+            -----Reports-----
+            ```csv
+            {communities_context}
+            ```
+            -----Entities-----
+            ```csv
+            {entities_context}
+            ```
+            -----Relationships-----
+            ```csv
+            {relations_context}
+            ```
+            -----Sources-----
+            ```csv
+            {text_units_context}
+            ```
+            """
     async def _map_global_communities(
             self,
             query: str,
@@ -142,9 +263,8 @@ class ERGraph(BaseGraph):
     async def global_query(
             self,
             query,
-            community_instance,
+            community_instance
         ) -> str:
-            self.query_config = query_config
             community_schema = community_instance.community_schema
             community_schema = {
                 k: v for k, v in community_schema.items() if v.level <= self.query_config.level
@@ -314,8 +434,18 @@ class ERGraph(BaseGraph):
             for k, v in m_edges.items():
                 maybe_edges[tuple(sorted(k))].extend(v)
 
-        await asyncio.gather(*[self._merge_nodes_then_upsert(k, v) for k, v in maybe_nodes.items()])
-       
+        entities = await asyncio.gather(*[self._merge_nodes_then_upsert(k, v) for k, v in maybe_nodes.items()])
+        if self.entity_vdb is not None:
+            data_for_vdb = {
+                mdhash_id(dp["entity_name"], prefix="ent-"): {
+                    "content": dp["entity_name"] + dp["description"],
+                    "entity_name": dp["entity_name"],
+                }
+                for dp in entities
+            }
+            await self.entity_vdb.upsert(data_for_vdb)
+        import pdb
+        pdb.set_trace()
         await asyncio.gather(*[self._merge_edges_then_upsert(k[0], k[1], v) for k, v in maybe_edges.items()])
 
     async def _merge_nodes_then_upsert(self, entity_name: str, nodes_data: list[Entity]):
