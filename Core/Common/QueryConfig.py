@@ -15,13 +15,14 @@ class QueryConfig(YamlModel):
     naive_max_token_for_text_unit: int = 12000
     # local search
     local_max_token_for_text_unit: int = 4000  # 12000 * 0.33
-    local_max_token_for_local_context: int = 4800  # 12000 * 0.4
+    max_token_for_local_context: int = 4800  # 12000 * 0.4
     local_max_token_for_community_report: int = 3200  # 12000 * 0.27
     local_community_single_one: bool = False
     # global search
     global_min_community_rating: float = 0
     global_max_consider_community: float = 512
     global_max_token_for_community_report: int = 16384
+    max_token_for_global_context: int = 4000
     global_special_community_map_llm_kwargs: dict = field(
         default_factory=lambda: {"response_format": {"type": "json_object"}}
     )
