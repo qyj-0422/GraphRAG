@@ -958,3 +958,78 @@ class ERGraph(BaseGraph):
         all_text_units = [t["data"] for t in all_text_units]
 
         return all_text_units
+    
+
+    async def hybrid_query(self, query):
+        low_level_context = None
+        high_level_context = None
+
+        kw_prompt_temp = QueryPrompt.KEYWORDS_EXTRACTION
+        kw_prompt = kw_prompt_temp.format(query=query)
+
+        result = await self.llm.aask(kw_prompt)
+        json_text = prase_json_from_response(result)
+        try:
+            keywords_data = json.loads(json_text)
+            hl_keywords = keywords_data.get("high_level_keywords", [])
+            ll_keywords = keywords_data.get("low_level_keywords", [])
+            hl_keywords = ", ".join(hl_keywords)
+            ll_keywords = ", ".join(ll_keywords)
+        except json.JSONDecodeError:
+            try:
+                result = (
+                    result.replace(kw_prompt[:-1], "")
+                    .replace("user", "")
+                    .replace("model", "")
+                    .strip()
+                )
+                result = "{" + result.split("{")[1].split("}")[0] + "}"
+                keywords_data = json.loads(result)
+                hl_keywords = keywords_data.get("high_level_keywords", [])
+                ll_keywords = keywords_data.get("low_level_keywords", [])
+                hl_keywords = ", ".join(hl_keywords)
+                ll_keywords = ", ".join(ll_keywords)
+            # Handle parsing error
+            except json.JSONDecodeError as e:
+                print(f"JSON parsing error: {e}")
+                return QueryPrompt.FAIL_RESPONSE
+
+        if ll_keywords:
+            low_level_context = await self._build_local_query_context(
+                ll_keywords
+            
+            )
+
+        if hl_keywords:
+            high_level_context = await self._build_global_query_context(
+                hl_keywords
+             
+            )
+
+        context = self.combine_contexts(high_level_context, low_level_context)
+
+        if self.query_config.only_need_context:
+            return context
+        if context is None:
+            return QueryPrompt.FAIL_RESPONSE
+
+
+        sys_prompt_temp = QueryPrompt.RAG_RESPONSE
+        sys_prompt = sys_prompt_temp.format(
+            context_data=context, response_type=self.query_config.response_type
+        )
+        response = await self.llm.aask(
+            query,
+            system_msgs=[sys_prompt]
+        )
+        if len(response) > len(sys_prompt):
+            response = (
+                response.replace(sys_prompt, "")
+                .replace("user", "")
+                .replace("model", "")
+                .replace(query, "")
+                .replace("<system>", "")
+                .replace("</system>", "")
+                .strip()
+            )
+        return response
