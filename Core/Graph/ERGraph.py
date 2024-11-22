@@ -81,7 +81,7 @@ class ERGraph(BaseGraph):
 
 
     async def named_entity_recognition(self, passage: str):
-        ner_messages = EntityPrompt.NER_PROMPTS.format(user_input=passage)
+        ner_messages = EntityPrompt.NER.format(user_input=passage)
 
         response_content = await self.llm.aask(ner_messages)
         response_content = prase_json_from_response(response_content)
@@ -161,41 +161,19 @@ class ERGraph(BaseGraph):
 
     async def _update_graph(self, results: list):
         maybe_nodes, maybe_edges = defaultdict(list), defaultdict(list)
-        clean_triples = []
-        phrases = []
         full_neighborhoods = {}
         relations = {}
         doc_entities = set()
         for entities, triples in results:
             for triple in triples:
                 triple = [str(s) for s in triple]
-                #
                 if len(triple) == 3:
-                    
-                        triple = [processing_phrases(p) for p in triple]
-                            
-                       
+                    triple = [processing_phrases(p) for p in triple]
+                    head_ent = triple[0]
+                    tail_ent = triple[2]        
 
-                        head_ent = clean_triple[0]
-                        tail_ent = clean_triple[2]
-     
+                    relations[(head_ent, tail_ent)] = triple[1]
 
-                        relations[(head_ent, tail_ent)] = clean_triple[1]
-
-                        raw_head_ent = triple[0]
-                        raw_tail_ent = triple[2]
-
-                        entity_neighborhood = full_neighborhoods.get(raw_head_ent, set())
-                        entity_neighborhood.add((raw_head_ent, triple[1], raw_tail_ent))
-                        full_neighborhoods[raw_head_ent] = entity_neighborhood
-
-                        entity_neighborhood = full_neighborhoods.get(raw_tail_ent, set())
-                        entity_neighborhood.add((raw_head_ent, triple[1], raw_tail_ent))
-                        full_neighborhoods[raw_tail_ent] = entity_neighborhood
-
-                        for triple_entity in [clean_triple[0], clean_triple[2]]:
-                            entities.append(triple_entity)
-                            doc_entities.add(triple_entity)
         import pdb
         pdb.set_trace()
         entities = await asyncio.gather(*[self._merge_nodes_then_upsert(k, v) for k, v in maybe_nodes.items()])
