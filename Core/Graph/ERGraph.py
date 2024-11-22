@@ -160,10 +160,8 @@ class ERGraph(BaseGraph):
         )
 
     async def _update_graph(self, results: list):
-        maybe_nodes, maybe_edges = defaultdict(list), defaultdict(list)
-        full_neighborhoods = {}
+        maybe_nodes, maybe_edges = set(), defaultdict(list)
         relations = {}
-        doc_entities = set()
         for entities, triples in results:
             for triple in triples:
                 triple = [str(s) for s in triple]
@@ -171,9 +169,10 @@ class ERGraph(BaseGraph):
                     triple = [processing_phrases(p) for p in triple]
                     head_ent = triple[0]
                     tail_ent = triple[2]        
-
+                    maybe_nodes.add(head_ent)
                     relations[(head_ent, tail_ent)] = triple[1]
-
+                    maybe_edges[head_ent].extend(tail_ent)
+                    maybe_edges[tail_ent].extend(head_ent)
         import pdb
         pdb.set_trace()
         entities = await asyncio.gather(*[self._merge_nodes_then_upsert(k, v) for k, v in maybe_nodes.items()])
