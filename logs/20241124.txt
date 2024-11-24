@@ -1,0 +1,1 @@
+2024-11-24 16:52:27.879 | INFO     | metagpt.const:get_metagpt_package_root:21 - Package root set to /home/yingli/GraphRAG

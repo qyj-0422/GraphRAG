@@ -224,3 +224,15 @@ def truncate_list_by_token_size(list_data: list, key: callable, max_token_size: 
             result.append(data)
         return result    
 
+
+def processing_phrases(phrase: str) -> str:
+    """
+    Process a phrase string, removing non-alphanumeric characters and converting to lowercase.
+    
+    Args:
+        phrase (str): The string to process.
+    
+    Returns:
+        str: The processed string.
+    """
+    return re.sub('[^A-Za-z0-9 ]', ' ', phrase.lower()).strip()

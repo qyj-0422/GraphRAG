@@ -43,7 +43,9 @@ class BaseGraph(ABC, ContextMixin, BaseModel):
         if isinstance(docs, str):
             docs = [docs]
             
-
+        if isinstance[docs[0], dict]:
+            pass
+        
         new_docs = {mdhash_id(doc.strip(), prefix="doc-"): {"content": doc.strip()} for doc in docs}
         chunks = await get_chunks(new_docs, "chunking_by_seperators", self.ENCODER)
 
@@ -52,6 +54,7 @@ class BaseGraph(ABC, ContextMixin, BaseModel):
     async def build_graph(self, docs, emb_model_config_name = None):
 
   
+        
         
         self._exist_graph()
         self._extract_node()
