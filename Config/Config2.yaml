@@ -13,7 +13,7 @@ embedding:
   base_url: "https://cfcus02.opapi.win/v1"  # or forward url / other llm url
   api_key: "sk-XVBaWFFC3af98090Dc32T3BLbkFJ0Ba9481790144B1eaA6B"
   model: "text-embedding-3-small"
-  dimensions: 1536
+  dimensions: 128
   max_token_size: 8102
-  embed_batch_size: 32
+  embed_batch_size: 128
   embedding_func_max_async: int = 16

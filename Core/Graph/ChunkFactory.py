@@ -227,7 +227,7 @@ def create_chunk_method(method_name):
     return chunking_method
 
 
-async def get_chunks(new_docs, chunk_method_name, token_model, **chunk_func_params):
+async def get_chunks(new_docs, chunk_method_name, token_model, is_chunked : bool = False, **chunk_func_params):
 
     kv_chunks = {}
 
@@ -237,6 +237,17 @@ async def get_chunks(new_docs, chunk_method_name, token_model, **chunk_func_para
 
     tokens = token_model.encode_batch(docs, num_threads=16)
 
+    if is_chunked:
+        for idx, doc in enumerate(docs):
+            kv_chunks.update(
+                {mdhash_id(doc.strip(), prefix="chunk-"): {
+                        "tokens": tokens[idx],
+                        "content": doc.strip(),
+                        "chunk_order_index": idx,
+                        "full_doc_id": doc_keys[idx],
+                }}
+            )
+        return kv_chunks    
 
     chunk_func = create_chunk_method(chunk_method_name)
 

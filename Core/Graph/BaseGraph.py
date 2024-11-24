@@ -31,7 +31,7 @@ class BaseGraph(ABC, ContextMixin, BaseModel):
         return data
     
 
-    async def chunk_documents(self, docs: Union[str, list[str]], is_chunked : bool = False) -> dict[str, dict[str, str]]:
+    async def chunk_documents(self, docs: Union[str, list[Any]], is_chunked : bool = False) -> dict[str, dict[str, str]]:
         """Chunk the given documents into smaller chunks.
 
         Args:
@@ -42,13 +42,13 @@ class BaseGraph(ABC, ContextMixin, BaseModel):
         """
         if isinstance(docs, str):
             docs = [docs]
-            
-        if isinstance[docs[0], dict]:
-            pass
-        
-        new_docs = {mdhash_id(doc.strip(), prefix="doc-"): {"content": doc.strip()} for doc in docs}
-        chunks = await get_chunks(new_docs, "chunking_by_seperators", self.ENCODER)
-
+     
+        if isinstance(docs[0], dict):
+            new_docs = {mdhash_id(doc['content'].strip(), prefix="doc-"): {"content": doc['content'].strip()} for doc in docs}
+        else:
+            new_docs = {mdhash_id(doc.strip(), prefix="doc-"): {"content": doc.strip()} for doc in docs}
+        chunks = await get_chunks(new_docs, "chunking_by_seperators", self.ENCODER, is_chunked=is_chunked)
+      
         return chunks
 
     async def build_graph(self, docs, emb_model_config_name = None):

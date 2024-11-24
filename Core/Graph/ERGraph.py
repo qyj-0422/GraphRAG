@@ -62,12 +62,15 @@ class ERGraph(BaseGraph):
                 chunk_key, chunk_dp = chunk_key_dp
                 entities = await self.named_entity_recognition(chunk_dp)
                 triples =  await self._openie_post_ner_extract(chunk_dp, entities)
-                return entities, triples
+                return await self._organize_records(entities, triples, chunk_key)
             #TODO: support persist for the extracted enetities and tirples
             results = await asyncio.gather(*[extract_openie_from_triples(c) for c in ordered_chunks])
        
             await self._update_graph(results)
-      
+
+            # Augment the graph by ann searching & Store the similarity objects for indexing. 
+
+            await self._augment_graph()
           
         
             # # ---------- commit upsertings and indexing
@@ -79,7 +82,8 @@ class ERGraph(BaseGraph):
 
     
 
-
+    async def _augment_graph(self):
+        pass 
     async def named_entity_recognition(self, passage: str):
         ner_messages = EntityPrompt.NER.format(user_input=passage)
 
@@ -109,25 +113,20 @@ class ERGraph(BaseGraph):
 
 
 
-    async def _organize_records(self, records: list[str], chunk_key: str):
+    async def _organize_records(self, entities, triples, chunk_key: str):
         maybe_nodes, maybe_edges = defaultdict(list), defaultdict(list)
 
-        for record in records:
-            match = re.search(r"\((.*)\)", record)
-            if match is None:
-                continue
+        for entity in entities :
+            entity_name =  processing_phrases(entity)
+            maybe_nodes[entity_name].append({
+                "source_id": chunk_key,
+            })
 
-            record_attributes = split_string_by_multi_markers(match.group(1), [DEFAULT_TUPLE_DELIMITER])
-            entity = await self._handle_single_entity_extraction(record_attributes, chunk_key)
-
-            if entity is not None:
-                maybe_nodes[entity.entity_name].append(entity)
-                continue
-       
-            relationship = await self._handle_single_relationship_extraction(record_attributes, chunk_key)
-         
-            if relationship is not None:
-                maybe_edges[(relationship.src_id, relationship.tgt_id)].append(relationship)
+        for triple in triples: 
+            relationship = Relationship(src_id = processing_phrases(triple[0]), 
+                                        tgt_id = processing_phrases(triple[2]), 
+                                        weight=1.0, source_id=chunk_key, relation_name = processing_phrases(triple[1]))
+            maybe_edges[(relationship.src_id, relationship.tgt_id)].append(relationship)
 
         return dict(maybe_nodes), dict(maybe_edges)
 
@@ -160,56 +159,49 @@ class ERGraph(BaseGraph):
         )
 
     async def _update_graph(self, results: list):
-        maybe_nodes, maybe_edges = set(), defaultdict(list)
-        relations = {}
-        for entities, triples in results:
-            for triple in triples:
-                triple = [str(s) for s in triple]
-                if len(triple) == 3:
-                    triple = [processing_phrases(p) for p in triple]
-                    head_ent = triple[0]
-                    tail_ent = triple[2]        
-                    maybe_nodes.add(head_ent)
-                    relations[(head_ent, tail_ent)] = triple[1]
-                    maybe_edges[head_ent].extend(tail_ent)
-                    maybe_edges[tail_ent].extend(head_ent)
+        maybe_nodes, maybe_edges = defaultdict(list), defaultdict(list)
+        for m_nodes, m_edges in results:
+            for k, v in m_nodes.items():
+                maybe_nodes[k].extend(v)
+            for k, v in m_edges.items():
+                maybe_edges[tuple(sorted(k))].extend(v)
+
+        entities = await asyncio.gather(*[self._merge_nodes_then_upsert(k, v) for k, v in maybe_nodes.items()])
         import pdb
         pdb.set_trace()
-        entities = await asyncio.gather(*[self._merge_nodes_then_upsert(k, v) for k, v in maybe_nodes.items()])
         if self.entity_vdb is not None:
             data_for_vdb = {
                 mdhash_id(dp["entity_name"], prefix="ent-"): {
-                    "content": dp["entity_name"] + dp["description"],
+                    "content": dp["entity_name"],
                     "entity_name": dp["entity_name"],
                 }
                 for dp in entities
             }
             await self.entity_vdb.upsert(data_for_vdb)
-        await asyncio.gather(*[self._merge_edges_then_upsert(k[0], k[1], v) for k, v in maybe_edges.items()])
+   
+        relationships = await asyncio.gather(*[self._merge_edges_then_upsert(k[0], k[1], v) for k, v in maybe_edges.items()])
+        #TODO: For relationships 
+        if self.relationship_vdb is not None:
+            data_for_vdb = {
+                mdhash_id(dp["entity_name"], prefix="ent-"): {
+                    "content": dp["entity_name"],
+                    "entity_name": dp["entity_name"],
+                }
+                for dp in relationships
+            }
+            await self.relationship_vdb.upsert(data_for_vdb)
 
     async def _merge_nodes_then_upsert(self, entity_name: str, nodes_data: list[Entity]):
         existing_node = await self.er_graph.get_node(entity_name)
-        existing_data = [[],[],[]] if existing_node is None else [
-            existing_node["entity_type"],
-            split_string_by_multi_markers(existing_node["source_id"], [GRAPH_FIELD_SEP]),
-            existing_node["description"]
+        existing_data = [[]] if existing_node is None else [
+            existing_node["source_id"],
         ]
 
-        entity_type = sorted(
-            Counter(dp.entity_type for dp in nodes_data + existing_data[0]).items(),
-            key=lambda x: x[1], reverse=True
-        )[0][0]
-
-        description = GRAPH_FIELD_SEP.join(
-            sorted(set(dp.description for dp in nodes_data) | set(existing_data[2]))
-        )
         source_id = GRAPH_FIELD_SEP.join(
-            set(dp.source_id for dp in nodes_data) | set(existing_data[1])
+            set(dp["source_id"] for dp in nodes_data) | set(existing_data[0])
         )
 
-        description = await self._handle_entity_relation_summary(entity_name, description)
-
-        node_data = dict(entity_type=entity_type, description=description, source_id=source_id)
+        node_data = dict(source_id = source_id)
  
         await self.er_graph.upsert_node(entity_name, node_data=node_data)
         return {**node_data, "entity_name": entity_name}
@@ -224,42 +216,22 @@ class ERGraph(BaseGraph):
         #NOTE: For the nano-rag, it supports DSpy 
         weight = sum(dp.weight for dp in edges_data) + existing_edge_data.get("weight", 0)
 
-        description = GRAPH_FIELD_SEP.join(
-            sorted(set(dp.description for dp in edges_data) | {existing_edge_data.get("description", "")})
-        )
         source_id = GRAPH_FIELD_SEP.join(
             set([dp.source_id for dp in edges_data] + split_string_by_multi_markers(existing_edge_data.get("source_id", ""), [GRAPH_FIELD_SEP])
         ))
-        if self.config.use_keywords:
-            keywords = GRAPH_FIELD_SEP.join(
-                sorted(set([dp.keywords for dp in edges_data] + split_string_by_multi_markers(existing_edge_data.get("keywords", ""), [GRAPH_FIELD_SEP])
-            )))
-            
+        relation_name = GRAPH_FIELD_SEP.join(
+            sorted(set(dp.relation_name for dp in edges_data) | {existing_edge_data.get("relation_name", "")})
+        )
         for need_insert_id in (src_id, tgt_id):
             if not await self.er_graph.has_node(need_insert_id):
                 await self.er_graph.upsert_node(
                     need_insert_id,
-                    node_data=dict(source_id=source_id, description=description, entity_type='"UNKNOWN"')
+                    node_data=dict(source_id=source_id)
                 )
-
-        description = await self._handle_entity_relation_summary((src_id, tgt_id), description)
-
-        await self.er_graph.upsert_edge(src_id, tgt_id, edge_data=dict(weight=weight, description=description, source_id=source_id, keywords = keywords))
-
-    async def _handle_entity_relation_summary(self, entity_or_relation_name: str, description: str) -> str:
-
-        tokens = self.ENCODER.encode(description)
-        if len(tokens) < self.config.summary_max_tokens:
-            return description
-
-        use_description = self.ENCODER.decode(tokens[:self.llm.get_maxtokens()])
-        context_base = dict(
-            entity_name=entity_or_relation_name,
-            description_list=use_description.split(GRAPH_FIELD_SEP)
-        )
-        use_prompt = EntityPrompt.SUMMARIZE_ENTITY_DESCRIPTIONS.format(**context_base)
-        logger.debug(f"Trigger summary: {entity_or_relation_name}")
-        return await self.llm.aask(use_prompt, max_tokens = self.config.summary_max_tokens)
+        edge_data = dict(weight=weight, source_id=source_id, relation_name = relation_name)
+        await self.er_graph.upsert_edge(src_id, tgt_id, edge_data = edge_data)
+        return {**edge_data, "src_id": src_id, "tgt_id": tgt_id}
+  
         
 
     def _build_context_for_entity_extraction(self, content: str) -> dict:

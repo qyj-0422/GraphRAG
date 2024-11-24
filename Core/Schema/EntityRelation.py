@@ -13,6 +13,7 @@ class Relationship:
         self.src_id = src_id
         self.tgt_id = tgt_id
         self.source_id = source_id
+        self.relation_name = kwargs.get('relation_name', "")
         self.weight = kwargs.get('weight', 0.0) # for GraphRAG and LightRAG
         self.description = kwargs.get('description', "") # for GraphRAG and LightRAG
         self.keywords = kwargs.get('keywords', "") # for LightRAG

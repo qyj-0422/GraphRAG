@@ -551,7 +551,8 @@ class ERGraph(BaseGraph):
                 maybe_nodes[k].extend(v)
             for k, v in m_edges.items():
                 maybe_edges[tuple(sorted(k))].extend(v)
-
+        import pdb
+        pdb.set_trace()
         entities = await asyncio.gather(*[self._merge_nodes_then_upsert(k, v) for k, v in maybe_nodes.items()])
         if self.entity_vdb is not None:
             data_for_vdb = {
@@ -583,7 +584,8 @@ class ERGraph(BaseGraph):
         source_id = GRAPH_FIELD_SEP.join(
             set(dp.source_id for dp in nodes_data) | set(existing_data[1])
         )
-
+        import pdb
+        pdb.set_trace()
         description = await self._handle_entity_relation_summary(entity_name, description)
 
         node_data = dict(entity_type=entity_type, description=description, source_id=source_id)
