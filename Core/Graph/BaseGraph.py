@@ -48,7 +48,7 @@ class BaseGraph(ABC, ContextMixin, BaseModel):
         else:
             new_docs = {mdhash_id(doc.strip(), prefix="doc-"): {"content": doc.strip()} for doc in docs}
         chunks = await get_chunks(new_docs, "chunking_by_seperators", self.ENCODER, is_chunked=is_chunked)
-      
+        self.chunks = chunks
         return chunks
 
     async def build_graph(self, docs, emb_model_config_name = None):

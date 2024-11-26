@@ -76,7 +76,13 @@ class Config(CLIParams, YamlModel):
     # Query Parameters
     enable_local: bool = False
     enable_naive_rag: bool = False
-
+    # ColBert Config 
+    use_colbert: bool = True
+    colbert_checkpoint_path: str = "./Tools/Index/colbertv2.0"
+    index_name: str = "nbits_2"
+    similarity_max: float = 1.0
+    # Graph Augmentation
+    enable_graph_augmentation: bool = True
     @classmethod
     def from_home(cls, path):
         """Load config from ~/.metagpt/config2.yaml"""

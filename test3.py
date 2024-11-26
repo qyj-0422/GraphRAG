@@ -15,5 +15,5 @@ if __name__ == "__main__":
     asyncio.run(graph._construct_graph(chunks))
 
     
-    # asyncio.run(graph.query("who are you"))
+    asyncio.run(graph.query("who are you"))
    

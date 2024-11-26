@@ -5,7 +5,7 @@ import re
 import numbers
 from Core.Common.Logger import logger
 import tiktoken
-
+import numpy as np
 def singleton(cls):
     instances = {}
 
@@ -236,3 +236,14 @@ def processing_phrases(phrase: str) -> str:
         str: The processed string.
     """
     return re.sub('[^A-Za-z0-9 ]', ' ', phrase.lower()).strip()
+
+
+def min_max_normalize(x):
+    """
+    Min-max normalization of a list of values.
+
+    Args: 
+        x (list): A list of values to normalize.
+        Returns: A list of normalized values.
+    """
+    return (x - np.min(x)) / (np.max(x) - np.min(x))

@@ -27,7 +27,6 @@ from Core.Common.LLMConfig import LLMConfig, LLMType
 from metagpt.const import USE_CONFIG_TIMEOUT
 from metagpt.logs import log_llm_stream, logger
 from Core.Provider.BaseLLM import BaseLLM
-from metagpt.provider.constant import GENERAL_FUNCTION_SCHEMA
 from Core.Provider.LLM_Provider_Register import register_provider
 from metagpt.utils.common import CodeParser, decode_image, log_and_reraise
 from metagpt.utils.cost_manager import CostManager

@@ -11,6 +11,9 @@ from llama_index.core.indices.base import BaseIndex
 from llama_index.core.vector_stores.types import BasePydanticVectorStore
 from llama_index.vector_stores.faiss import FaissVectorStore
 from llama_index.vector_stores.milvus import MilvusVectorStore
+from Core.Index.ColBertStore import ColbertIndex
+# from llama_index.legacy.indices.managed.colbert_index.base import ColbertIndex
+from pathlib import Path
 
 from Core.Index.BaseFactory import ConfigBasedFactory
 from Core.Index.Schema import (
@@ -18,7 +21,9 @@ from Core.Index.Schema import (
     BM25IndexConfig,
     FAISSIndexConfig,
     MilvusIndexConfig,
+    ColBertIndexConfig
 )
+
 
 
 class RAGIndexFactory(ConfigBasedFactory):
@@ -27,6 +32,7 @@ class RAGIndexFactory(ConfigBasedFactory):
             FAISSIndexConfig: self._create_faiss,
             BM25IndexConfig: self._create_bm25,
             MilvusIndexConfig: self._create_milvus,
+            ColBertIndexConfig: self._crease_colbert
         }
         super().__init__(creators)
 
@@ -63,7 +69,16 @@ class RAGIndexFactory(ConfigBasedFactory):
         return self._index_from_vector_store(vector_store=vector_store, config=config, **kwargs)
 
 
-
+    def _crease_colbert(self, config: ColBertIndexConfig, **kwargs) -> VectorStoreIndex:
+    #     import pdb
+    #     # pdb.set_trace()
+        index_path = (Path(config.persist_path) / config.index_name)
+        if os.path.exists(index_path):
+            return ColbertIndex.load_from_disk(config.persist_path, config.index_name)
+        else:
+           
+            return ColbertIndex(**config.model_dump())
+   
     def _index_from_storage(
         self, storage_context: StorageContext, config: BaseIndexConfig, **kwargs
     ) -> VectorStoreIndex:
