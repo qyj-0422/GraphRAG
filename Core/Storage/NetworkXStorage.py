@@ -8,7 +8,7 @@ import numpy as np
 from dataclasses import dataclass
 from Core.Common.Logger import logger
 from Core.Storage.BaseGraphStorage import BaseGraphStorage
-from Core.Schema.EntityRelation import Relationship
+from Core.Schema.EntityRelation import Relationship, Entity
 @dataclass
 class NetworkXStorage(BaseGraphStorage):
     
@@ -111,7 +111,7 @@ class NetworkXStorage(BaseGraphStorage):
             return list(self._graph.edges(source_node_id))
         return None
 
-    async def upsert_node(self, node_id: str, node_data: dict[str, str]):
+    async def upsert_node(self, node_id: str, node_data: Entity):
         self._graph.add_node(node_id, **node_data)
 
     #TODO: not use dict for edge_data 

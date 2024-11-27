@@ -1,12 +1,17 @@
+from dataclasses import dataclass, asdict
 
+@dataclass
 class Entity:
 
-    def __init__(self, entity_name: str, entity_type: str, description: str, source_id: str):
+    def __init__(self, entity_name: str, source_id: str, entity_type: str = "", description: str = "" ):
         self.entity_name = entity_name
         self.entity_type = entity_type
         self.description = description
         self.source_id = source_id
 
+    @property
+    def as_dict(self):
+        return asdict(self)
 class Relationship:
 
     def __init__(self, src_id: str, tgt_id: str, source_id: str, **kwargs):

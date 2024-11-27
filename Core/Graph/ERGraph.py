@@ -47,12 +47,12 @@ class ERGraph(BaseGraph):
    
     text_chunks: JsonKVStorage = JsonKVStorage()
     er_graph: NetworkXStorage = NetworkXStorage()
-    
+    chunk_key_to_idx: dict = defaultdict(int)
     @model_validator(mode="after")
     def _init_vectordb(cls, data):
         # index_config = FAISSIndexConfig(persist_path="./storage", embed_model = get_rag_embedding())
         index_config = ColBertIndexConfig(persist_path="./storage/colbert_index", index_name="nbits_2", model_name=cls.config.colbert_checkpoint_path, nbits=2)
-        cls.entity_vdb = VectorIndex(index_config)
+        # cls.entity_vdb = VectorIndex(index_config)
       
 
         return data
@@ -62,18 +62,22 @@ class ERGraph(BaseGraph):
             filtered_keys = await self.text_chunks.filter_keys(list(chunks.keys()))
             inserting_chunks = {key: value for key, value in chunks.items() if key in filtered_keys}
             ordered_chunks = list(inserting_chunks.items())
-       
-            async def extract_openie_from_triples(chunk_key_dp: tuple[str, TextChunk]):
+            async def extract_openie_from_triples(chunk_idx: int, chunk_key_dp: tuple[str, TextChunk]):
                 chunk_key, chunk_dp = chunk_key_dp
                 entities = await self.named_entity_recognition(chunk_dp)
                 triples =  await self._openie_post_ner_extract(chunk_dp, entities)
+                self.chunk_key_to_idx[chunk_key] = chunk_idx
                 return await self._organize_records(entities, triples, chunk_key)
             #TODO: support persist for the extracted enetities and tirples
-            results = await asyncio.gather(*[extract_openie_from_triples(c) for c in ordered_chunks])
-
+            results = await asyncio.gather(*[extract_openie_from_triples(idx, chunk) for idx, chunk in enumerate(ordered_chunks)])
+           
             # Build graph based on the extracted entities and triples
             await self._add_to_graph(results)
             
+            # Build the PPR context for the Hipporag algorithm
+            await self._build_ppr_context()
+            import pdb
+            pdb.set_trace()    
             # # ---------- commit upsertings and indexing
             # await self.full_docs.upsert(new_docs)
             await self.text_chunks.upsert(inserting_chunks)
@@ -83,7 +87,65 @@ class ERGraph(BaseGraph):
 
     
 
-   
+    async def _build_ppr_context(self):
+        """
+        Build the context for the Personalized PageRank (PPR) query.
+
+        This function constructs two mappings:
+            1. chunk_to_edge: Maps chunks (document sources) to edge indices.
+            2. edge_to_entity: Maps edges to the entities (nodes) they connect.
+
+        The function iterates over all edges in the graph, retrieves relevant metadata for each edge,
+        and updates the mappings. These mappings are essential for executing PPR queries efficiently.
+        """
+        self.chunk_to_edge = defaultdict(int)
+        self.edge_to_entity = defaultdict(int)
+
+
+        nodes = list(self.er_graph.graph.nodes())
+        edges = list(self.er_graph.graph.edges())
+
+        async def _build_edge_chunk_mapping(edge) -> None:
+            """
+            Build mappings for the edges of a given graph.
+
+            Args:
+                edge (Tuple[str, str]): A tuple representing the edge (node1, node2).
+                edges (list): List of all edges in the graph.
+                nodes (list): List of all nodes in the graph.
+                docs_to_facts (Dict[Tuple[int, int], int]): Mapping of document indices to fact indices.
+                facts_to_phrases (Dict[Tuple[int, int], int]): Mapping of fact indices to phrase indices.
+            """
+            try:
+                # Fetch edge data asynchronously
+                edge_data = await self.er_graph.get_edge(edge[0], edge[1])
+
+                # Map document to edge
+                source_idx = self.chunk_key_to_idx[edge_data['source_id']]
+                edge_idx = edges.index(edge)
+                self.chunk_to_edge[(source_idx, edge_idx)] = 1
+
+                # Map fact to phrases for both nodes in the edge
+                node_idx_1 = nodes.index(edge[0])
+                node_idx_2 = nodes.index(edge[1])
+                self.edge_to_entity[(edge_idx, node_idx_1)] = 1
+                self.edge_to_entity[(edge_idx, node_idx_2)] = 1
+
+            except ValueError as ve:
+                # Handle specific errors, such as when edge or node is not found
+                logger.error(f"ValueError in edge {edge}: {ve}")
+            except KeyError as ke:
+                # Handle missing data in chunk_key_to_idx
+                logger.error(f"KeyError in edge {edge}: {ke}")
+            except Exception as e:
+                # Handle general exceptions gracefully
+                logger.error(f"Unexpected error processing edge {edge}: {e}")
+
+        # Process all nodes asynchronously
+        await asyncio.gather(*[_build_edge_chunk_mapping(edge) for edge in edges])
+
+        
+        
     async def named_entity_recognition(self, passage: str):
         ner_messages = EntityPrompt.NER.format(user_input=passage)
 
@@ -113,20 +175,25 @@ class ERGraph(BaseGraph):
 
 
 
-    async def _organize_records(self, entities, triples, chunk_key: str):
+    async def _organize_records(self, entities, triples, chunk_key):
         maybe_nodes, maybe_edges = defaultdict(list), defaultdict(list)
 
         for entity in entities :
             entity_name =  processing_phrases(entity)
             maybe_nodes[entity_name].append({
                 "source_id": chunk_key,
+                "entity_name": entity_name
             })
-
-        for triple in triples: 
-            relationship = Relationship(src_id = processing_phrases(triple[0]), 
-                                        tgt_id = processing_phrases(triple[2]), 
-                                        weight=1.0, source_id=chunk_key, relation_name = processing_phrases(triple[1]))
-            maybe_edges[(relationship.src_id, relationship.tgt_id)].append(relationship)
+      
+ 
+            for triple in triples: 
+                if len(triple) != 3:
+                    logger.warning(f"triples length is not 3, triple is: {triple}, len is {len(triple)}, so skip it")
+                    continue
+                relationship = Relationship(src_id = processing_phrases(triple[0]), 
+                                            tgt_id = processing_phrases(triple[2]), 
+                                            weight=1.0, source_id = chunk_key, relation_name = processing_phrases(triple[1]))
+                maybe_edges[(relationship.src_id, relationship.tgt_id)].append(relationship)
 
         return dict(maybe_nodes), dict(maybe_edges)
 
@@ -139,7 +206,7 @@ class ERGraph(BaseGraph):
                 maybe_nodes[k].extend(v)
             for k, v in m_edges.items():
                 maybe_edges[tuple(sorted(k))].extend(v)
-    
+        #NOTE: 修改这个地方就可以得到 你想要到 phrase_to_num_doc (used in Hipporag)
         entities = await asyncio.gather(*[self._merge_nodes_then_upsert(k, v) for k, v in maybe_nodes.items()])
  
         # If there is a vectordb, we need to upsert the entities
@@ -164,9 +231,9 @@ class ERGraph(BaseGraph):
             data_for_aug =  { mdhash_id(dp["entity_name"], prefix="ent-"): dp["entity_name"] for dp in entities}
             maybe_edges_aug = await self._augment_graph(queries = data_for_aug)
 
-        # Merge the edges
-        for k, v in maybe_edges_aug.items():
-            maybe_edges[tuple(sorted(k))].extend(v)
+            # Merge the edges
+            for k, v in maybe_edges_aug.items():
+                maybe_edges[tuple(sorted(k))].extend(v)
 
         await asyncio.gather(*[self._merge_edges_then_upsert(k[0], k[1], v) for k, v in maybe_edges.items()])
 
@@ -216,7 +283,7 @@ class ERGraph(BaseGraph):
             set(dp["source_id"] for dp in nodes_data) | set(existing_data[0])
         )
 
-        node_data = dict(source_id = source_id)
+        node_data = dict(source_id = source_id, entity_name = entity_name)
  
         await self.er_graph.upsert_node(entity_name, node_data=node_data)
         return {**node_data, "entity_name": entity_name}
@@ -241,7 +308,7 @@ class ERGraph(BaseGraph):
             if not await self.er_graph.has_node(need_insert_id):
                 await self.er_graph.upsert_node(
                     need_insert_id,
-                    node_data=dict(source_id=source_id)
+                    node_data=dict(source_id=source_id, entity_name = need_insert_id)
                 )
         edge_data = dict(weight=weight, source_id=source_id, relation_name = relation_name)
         await self.er_graph.upsert_edge(src_id, tgt_id, edge_data = edge_data)
@@ -306,11 +373,11 @@ class ERGraph(BaseGraph):
             return ''
     
 
-    def link_nodes(self, query_ner_list):
+    def link_nodes(self, query_entities):
         phrase_ids = []
         max_scores = []
 
-        for query in query_ner_list:
+        for query in query_entities:
             queries = Queries(path=None, data={0: query})
 
             queries_ = [query]
@@ -424,20 +491,17 @@ class ERGraph(BaseGraph):
         pass
     
 
-    def _extract_eneity_from_query(self, query):
+    async def _extract_eneity_from_query(self, query):
         entities = []
         try:
-            if query in self.named_entity_cache:
-                query_ner_list = self.named_entity_cache[query]['named_entities']
-            else:
-                query_ner_json = await self.named_entity_recognition(query)
-                query_ner_list = eval(query_ner_json)['named_entities']
+        
+            entities = await self.named_entity_recognition(query)
 
-            query_ner_list = [processing_phrases(p) for p in query_ner_list]
+            entities = [processing_phrases(p) for p in entities]
         except:
             self.logger.error('Error in Query NER')
-            query_ner_list = []
-        return query_ner_list
+
+        return entities
 
     async def query(self, query: str, param: QueryConfig):
         

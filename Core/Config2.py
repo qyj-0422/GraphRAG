@@ -82,7 +82,7 @@ class Config(CLIParams, YamlModel):
     index_name: str = "nbits_2"
     similarity_max: float = 1.0
     # Graph Augmentation
-    enable_graph_augmentation: bool = True
+    enable_graph_augmentation: bool = False
     @classmethod
     def from_home(cls, path):
         """Load config from ~/.metagpt/config2.yaml"""

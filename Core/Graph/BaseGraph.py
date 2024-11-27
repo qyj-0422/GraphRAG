@@ -42,9 +42,9 @@ class BaseGraph(ABC, ContextMixin, BaseModel):
         """
         if isinstance(docs, str):
             docs = [docs]
-     
+    
         if isinstance(docs[0], dict):
-            new_docs = {mdhash_id(doc['content'].strip(), prefix="doc-"): {"content": doc['content'].strip()} for doc in docs}
+            new_docs = {doc['id']: {"content": doc['content'].strip()} for doc in docs}
         else:
             new_docs = {mdhash_id(doc.strip(), prefix="doc-"): {"content": doc.strip()} for doc in docs}
         chunks = await get_chunks(new_docs, "chunking_by_seperators", self.ENCODER, is_chunked=is_chunked)

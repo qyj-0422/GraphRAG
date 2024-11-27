@@ -247,7 +247,7 @@ async def get_chunks(new_docs, chunk_method_name, token_model, is_chunked : bool
                         "full_doc_id": doc_keys[idx],
                 }}
             )
-        return kv_chunks    
+        return kv_chunks     
 
     chunk_func = create_chunk_method(chunk_method_name)
 
