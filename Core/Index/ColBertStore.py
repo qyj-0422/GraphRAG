@@ -145,3 +145,6 @@ class ColbertIndex(BaseIndex[IndexDict]):
         ranking = self.store.search_all(queries, k = top_k)
         return ranking
         
+    @property
+    def index_searcher(self):
+        return self.store

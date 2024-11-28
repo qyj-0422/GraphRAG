@@ -1,8 +1,10 @@
-import re
+import igraph as ig
 import asyncio
 import json
 from collections import defaultdict, Counter
 from typing import Union, Any
+from scipy.sparse import csr_array
+import numpy as np
 from Core.Graph.BaseGraph import BaseGraph
 from Core.Common.Logger import logger
 from Core.Common.Utils import (
@@ -16,6 +18,8 @@ from Core.Common.Utils import (
     processing_phrases,
     min_max_normalize
 )
+from colbert.data import Queries
+
 from Core.Schema.ChunkSchema import TextChunk
 from Core.Schema.Message import Message
 from Core.Prompt import EntityPrompt, QueryPrompt
@@ -42,6 +46,8 @@ from Core.Index.Schema import (
      FAISSIndexConfig,
      ColBertIndexConfig
 )
+from tqdm import tqdm
+
 from Core.Index.VectorIndex import VectorIndex
 class ERGraph(BaseGraph):
    
@@ -52,7 +58,7 @@ class ERGraph(BaseGraph):
     def _init_vectordb(cls, data):
         # index_config = FAISSIndexConfig(persist_path="./storage", embed_model = get_rag_embedding())
         index_config = ColBertIndexConfig(persist_path="./storage/colbert_index", index_name="nbits_2", model_name=cls.config.colbert_checkpoint_path, nbits=2)
-        # cls.entity_vdb = VectorIndex(index_config)
+        cls.entity_vdb = VectorIndex(index_config)
       
 
         return data
@@ -61,23 +67,29 @@ class ERGraph(BaseGraph):
         try:
             filtered_keys = await self.text_chunks.filter_keys(list(chunks.keys()))
             inserting_chunks = {key: value for key, value in chunks.items() if key in filtered_keys}
-            ordered_chunks = list(inserting_chunks.items())
+            self.ordered_chunks = list(inserting_chunks.items())       
             async def extract_openie_from_triples(chunk_idx: int, chunk_key_dp: tuple[str, TextChunk]):
                 chunk_key, chunk_dp = chunk_key_dp
                 entities = await self.named_entity_recognition(chunk_dp)
                 triples =  await self._openie_post_ner_extract(chunk_dp, entities)
+                # Maybe this is not the best way to organize the records
                 self.chunk_key_to_idx[chunk_key] = chunk_idx
                 return await self._organize_records(entities, triples, chunk_key)
             #TODO: support persist for the extracted enetities and tirples
-            results = await asyncio.gather(*[extract_openie_from_triples(idx, chunk) for idx, chunk in enumerate(ordered_chunks)])
-           
+            results = await asyncio.gather(*[extract_openie_from_triples(idx, chunk) for idx, chunk in enumerate(self.ordered_chunks)])
+            print(self.chunk_key_to_idx)
             # Build graph based on the extracted entities and triples
             await self._add_to_graph(results)
             
             # Build the PPR context for the Hipporag algorithm
             await self._build_ppr_context()
-            import pdb
-            pdb.set_trace()    
+
+
+            #Augment the graph by ann searching
+            if self.config.enable_graph_augmentation:
+                data_for_aug =  { mdhash_id(node, prefix="ent-"): node for node in self.er_graph.graph.nodes()}
+                await self._augment_graph(queries = data_for_aug)
+
             # # ---------- commit upsertings and indexing
             # await self.full_docs.upsert(new_docs)
             await self.text_chunks.upsert(inserting_chunks)
@@ -86,6 +98,7 @@ class ERGraph(BaseGraph):
             logger.info("Consturcting graph finisihed")
 
     
+
 
     async def _build_ppr_context(self):
         """
@@ -100,7 +113,7 @@ class ERGraph(BaseGraph):
         """
         self.chunk_to_edge = defaultdict(int)
         self.edge_to_entity = defaultdict(int)
-
+        self.id_to_entity = defaultdict(int)
 
         nodes = list(self.er_graph.graph.nodes())
         edges = list(self.er_graph.graph.edges())
@@ -119,15 +132,19 @@ class ERGraph(BaseGraph):
             try:
                 # Fetch edge data asynchronously
                 edge_data = await self.er_graph.get_edge(edge[0], edge[1])
-
-                # Map document to edge
-                source_idx = self.chunk_key_to_idx[edge_data['source_id']]
-                edge_idx = edges.index(edge)
-                self.chunk_to_edge[(source_idx, edge_idx)] = 1
+                source_ids = edge_data['source_id'].split(GRAPH_FIELD_SEP)
+                for source_id in source_ids:
+                    # Map document to edge
+                    source_idx = self.chunk_key_to_idx[source_id]
+                    edge_idx = edges.index(edge)
+                    self.chunk_to_edge[(source_idx, edge_idx)] = 1
 
                 # Map fact to phrases for both nodes in the edge
                 node_idx_1 = nodes.index(edge[0])
                 node_idx_2 = nodes.index(edge[1])
+  
+          
+
                 self.edge_to_entity[(edge_idx, node_idx_1)] = 1
                 self.edge_to_entity[(edge_idx, node_idx_2)] = 1
 
@@ -144,8 +161,20 @@ class ERGraph(BaseGraph):
         # Process all nodes asynchronously
         await asyncio.gather(*[_build_edge_chunk_mapping(edge) for edge in edges])
 
-        
-        
+        for node in nodes:
+            self.id_to_entity[nodes.index(node)] = node 
+
+
+        self.chunk_to_edge_mat = csr_array(([int(v) for v in self.chunk_to_edge.values()], ([int(e[0]) for e in self.chunk_to_edge.keys()], [int(e[1]) for e in self.chunk_to_edge.keys()])),
+                                      shape=(len(self.chunk_key_to_idx.keys()), len(edges)))
+
+        self.edge_to_entity_mat = csr_array(([int(v) for v in  self.edge_to_entity.values()], ([e[0] for e in self.edge_to_entity.keys()], [e[1] for e in self.edge_to_entity.keys()])),
+                                         shape=(len(edges), len(nodes)))
+ 
+        self.chunk_to_entity_mat = self.chunk_to_edge_mat.dot(self.edge_to_entity_mat)
+        self.chunk_to_entity_mat[self.chunk_to_entity_mat.nonzero()] = 1
+        self.entity_doc_count = self.chunk_to_entity_mat.sum(0).T
+
     async def named_entity_recognition(self, passage: str):
         ner_messages = EntityPrompt.NER.format(user_input=passage)
 
@@ -156,9 +185,6 @@ class ERGraph(BaseGraph):
             entities = []
         else:
             entities = entities['named_entities']
-
-
-
         return entities
 
     async def _openie_post_ner_extract(self, chunk, entities):
@@ -206,7 +232,7 @@ class ERGraph(BaseGraph):
                 maybe_nodes[k].extend(v)
             for k, v in m_edges.items():
                 maybe_edges[tuple(sorted(k))].extend(v)
-        #NOTE: 修改这个地方就可以得到 你想要到 phrase_to_num_doc (used in Hipporag)
+        
         entities = await asyncio.gather(*[self._merge_nodes_then_upsert(k, v) for k, v in maybe_nodes.items()])
  
         # If there is a vectordb, we need to upsert the entities
@@ -225,15 +251,6 @@ class ERGraph(BaseGraph):
 
             await self.entity_vdb.upsert(data_for_vdb)
             
-
-        #Augment the graph by ann searching & Store the similarity objects for indexing. 
-        if self.config.enable_graph_augmentation:
-            data_for_aug =  { mdhash_id(dp["entity_name"], prefix="ent-"): dp["entity_name"] for dp in entities}
-            maybe_edges_aug = await self._augment_graph(queries = data_for_aug)
-
-            # Merge the edges
-            for k, v in maybe_edges_aug.items():
-                maybe_edges[tuple(sorted(k))].extend(v)
 
         await asyncio.gather(*[self._merge_edges_then_upsert(k[0], k[1], v) for k, v in maybe_edges.items()])
 
@@ -271,7 +288,13 @@ class ERGraph(BaseGraph):
                                         weight= self.config.similarity_max * score, relation_name = "similarity")
                 maybe_edges[(relationship.src_id, relationship.tgt_id)].append(relationship)
 
-        return maybe_edges
+        # Merge the edges
+        maybe_edges_aug = defaultdict(list)
+        for k, v in maybe_edges.items():
+            maybe_edges_aug[tuple(sorted(k))].extend(v)
+        
+        await asyncio.gather(*[self._merge_edges_then_upsert(k[0], k[1], v) for k, v in maybe_edges.items()])
+
               
     async def _merge_nodes_then_upsert(self, entity_name: str, nodes_data: list[Entity]):
         existing_node = await self.er_graph.get_node(entity_name)
@@ -337,16 +360,10 @@ class ERGraph(BaseGraph):
         return merged_elements
 
 
-    def merge_elements_with_same_first_line(self, elements, prefix='Wikipedia Title: '):
-        merged_dict = defaultdict(str)
-        for element in elements:
-            lines = element.split('\n', 1)
-            first_line = lines[0]
-            content = lines[1] if len(lines) > 1 else ''
-            merged_dict[first_line] += '\n' + content
-        merged_elements = [prefix + first_line + merged_dict[first_line] for first_line in merged_dict]
-        return merged_elements
-    def reason_step(self, dataset, few_shot: list, query: str, passages: list, thoughts: list, client):
+  
+    
+
+    def reason_step(self, few_shot: list, query: str, passages: list, thoughts: list):
         """
         Given few-shot samples, query, previous retrieved passages, and previous thoughts, generate the next thought with OpenAI models. The generated thought is used for further retrieval step.
         :return: next thought
@@ -356,59 +373,70 @@ class ERGraph(BaseGraph):
             prompt_demo += f'{sample["document"]}\n\nQuestion: {sample["question"]}\nThought: {sample["answer"]}\n\n'
 
         prompt_user = ''
-        if dataset in ['hotpotqa', 'hotpotqa_train']:
-            passages = self.merge_elements_with_same_first_line(passages)
+
+        #TODO: merge title for the hotpotQA dataset
         for passage in passages:
             prompt_user += f'{passage}\n\n'
-        prompt_user += f'Question: {query}\nThought:' + ' '.join(thoughts)
+        prompt_user += f'Question: {query} \n Thought:' + ' '.join(thoughts)
 
-        messages = ChatPromptTemplate.from_messages([SystemMessage(ircot_reason_instruction + '\n\n' + prompt_demo),
-                                                    HumanMessage(prompt_user)]).format_prompt()
 
         try:
-            chat_completion = client.invoke(messages.to_messages())
-            response_content = chat_completion.content
+            response_content = self.llm.aask(msg = prompt_demo + prompt_user, system_msgs = QueryPrompt.IRCOT_REASON_INSTRUCTION)
         except Exception as e:
             print(e)
             return ''
-    
+        return response_content
 
-    def link_nodes(self, query_entities):
-        phrase_ids = []
+    def get_colbert_max_score(self, query):
+        queries_ = [query]
+        encoded_query =self.entity_vdb._index.index_searcher.encode(queries_, full_length_search=False)
+        encoded_doc =self.entity_vdb._index.index_searcher.checkpoint.docFromText(queries_).float()
+        max_score = encoded_query[0].matmul(encoded_doc[0].T).max(dim=1).values.sum().detach().cpu().numpy()
+
+        return max_score
+
+
+    async def link_node_by_colbertv2(self, query_entities):
+        entity_ids = []
         max_scores = []
 
         for query in query_entities:
             queries = Queries(path=None, data={0: query})
 
             queries_ = [query]
-            encoded_query = self.phrase_searcher.encode(queries_, full_length_search=False)
+            # Only use for the colbert index
+            if not isinstance(self.entity_vdb.config, ColBertIndexConfig):
+                logger.error('The entity_vdb is not a ColBertIndexConfig')
+            encoded_query = self.entity_vdb._index.index_searcher.encode(queries_, full_length_search=False)
 
             max_score = self.get_colbert_max_score(query)
+     
+            ranking = self.entity_vdb._index.index_searcher.search_all(queries, k=1)
+  
+            for entity_id, rank, score in ranking.data[0]:
 
-            ranking = self.phrase_searcher.search_all(queries, k=1)
-            for phrase_id, rank, score in ranking.data[0]:
-                phrase = self.phrases[phrase_id]
-                phrases_ = [phrase]
-                encoded_doc = self.phrase_searcher.checkpoint.docFromText(phrases_).float()
+                entity = self.id_to_entity[entity_id]
+                entity_ = [entity]
+                encoded_doc =self.entity_vdb._index.index_searcher.checkpoint.docFromText(entity_).float()
                 real_score = encoded_query[0].matmul(encoded_doc[0].T).max(dim=1).values.sum().detach().cpu().numpy()
 
-                phrase_ids.append(phrase_id)
+                entity_ids.append(entity_id)
                 max_scores.append(real_score / max_score)
 
-        # create a vector (num_doc) with 1s at the indices of the retrieved documents and 0s elsewhere
-        top_phrase_vec = np.zeros(len(self.phrases))
+        # Create a vector (num_doc) with 1s at the indices of the retrieved documents and 0s elsewhere
+        top_phrase_vec = np.zeros(len(self.er_graph.graph.nodes()))
 
-        for phrase_id in phrase_ids:
-            if self.node_specificity:
-                if self.phrase_to_num_doc[phrase_id] == 0:
+        # Set the weight of the retrieved documents based on the number of documents they appear in
+        for enetity_id in entity_ids:
+            if self.config.node_specificity:
+                if  self.entity_doc_count[enetity_id] == 0:
                     weight = 1
                 else:
-                    weight = 1 / self.phrase_to_num_doc[phrase_id]
-                top_phrase_vec[phrase_id] = weight
+                    weight = 1 / self.entity_doc_count[enetity_id]
+                top_phrase_vec[enetity_id] = weight
             else:
-                top_phrase_vec[phrase_id] = 1.0
-
-        return top_phrase_vec, {(query, self.phrases[phrase_id]): max_score for phrase_id, max_score, query in zip(phrase_ids, max_scores, query_ner_list)}
+                top_phrase_vec[enetity_id] = 1.0
+        return top_phrase_vec, {(query, self.id_to_entity[entity_id]): max_score for entity_id, max_score, query in zip(entity_ids, max_scores, query_entities)}
     async def rank_docs(self, query: str, top_k=10):
         """
         Rank documents based on the query using ColBERTv2 and PPR.
@@ -419,67 +447,60 @@ class ERGraph(BaseGraph):
         
         assert isinstance(query, str), 'Query must be a string'
         query_entities = await self._extract_eneity_from_query(query)
-    
-        # Use ColBERTv2 for retrieval
-        queries = Queries(path=None, data={0: query})
-        
-        # Use PPR for graph algorithm
+
+        # Use ColBERTv2 for retrieval with PPR score
         if len(query_entities) > 0:
-            all_phrase_weights, linking_score_map = self.link_nodes(query_entities)
-            ppr_phrase_probs = self.run_pagerank_igraph_chunk([all_phrase_weights])[0]
+            all_phrase_weights, linking_score_map = await self.link_node_by_colbertv2(query_entities)
+            ppr_node_probs = await self._run_pagerank_igraph_chunk([all_phrase_weights])
+            
         else:  # no entities found
             logger.warning('No entities found in query')
-            ppr_doc_prob = np.ones(len(self.extracted_triples)) / len(self.extracted_triples)
+            ppr_chunk_prob = np.ones(len(self.extracted_triples)) / len(self.extracted_triples)
+
         # Combine scores using PPR
-        fact_prob = self.facts_to_phrases_mat.dot(ppr_phrase_probs)
-        ppr_doc_prob = self.docs_to_facts_mat.dot(fact_prob)
-        ppr_doc_prob = min_max_normalize(ppr_doc_prob)
-        
+  
+        edge_prob = self.edge_to_entity_mat.dot(ppr_node_probs)
+        ppr_chunk_prob = self.chunk_to_edge_mat.dot(edge_prob)
+        ppr_chunk_prob = min_max_normalize(ppr_chunk_prob)
+ 
         # Final document probability
-        doc_prob = ppr_doc_prob
-        
+        doc_prob = ppr_chunk_prob
+
         # Return top k documents
         sorted_doc_ids = np.argsort(doc_prob, kind='mergesort')[::-1]
         sorted_scores = doc_prob[sorted_doc_ids]
         
-        # Logging for debugging
-        if len(query_ner_list) > 0:
-            phrase_one_hop_triples = []
-            for phrase_id in np.where(all_phrase_weights > 0)[0]:
-                for t in list(self.kg_adj_list[phrase_id].items())[:20]:
-                    phrase_one_hop_triples.append([self.phrases[t[0]], t[1]])
-                for t in list(self.kg_inverse_adj_list[phrase_id].items())[:20]:
-                    phrase_one_hop_triples.append([self.phrases[t[0]], t[1], 'inv'])
-            
-            nodes_in_retrieved_doc = []
-            for doc_id in sorted_doc_ids[:5]:
-                node_id_in_doc = list(np.where(self.doc_to_phrases_mat[[doc_id], :].toarray()[0] > 0)[0])
-                nodes_in_retrieved_doc.append([self.phrases[node_id] for node_id in node_id_in_doc])
-            
-            top_pagerank_phrase_ids = np.argsort(ppr_phrase_probs, kind='mergesort')[::-1][:20]
-            top_ranked_nodes = [self.phrases[phrase_id] for phrase_id in top_pagerank_phrase_ids]
-            
-            logs = {
-                'named_entities': query_ner_list,
-                'linked_node_scores': [list(k) + [float(v)] for k, v in linking_score_map.items()],
-                '1-hop_graph_for_linked_nodes': phrase_one_hop_triples,
-                'top_ranked_nodes': top_ranked_nodes,
-                'nodes_in_retrieved_doc': nodes_in_retrieved_doc
-            }
-        else:
-            logs = {}
+        
     
-        return sorted_doc_ids.tolist()[:top_k], sorted_scores.tolist()[:top_k], logs
-    async def retrieve_step(self, query: str, corpus, top_k: int, dataset: str):
-        ranks, scores, logs = await self.rank_docs(query, top_k=top_k)
-        if dataset in ['hotpotqa', 'hotpotqa_train']:
-            retrieved_passages = []
-            for rank in ranks:
-                key = list(corpus.keys())[rank]
-                retrieved_passages.append(key + '\n' + ''.join(corpus[key]))
-        else:
-            retrieved_passages = [corpus[rank]['title'] + '\n' + corpus[rank]['text'] for rank in ranks]
-        return retrieved_passages, scores, logs
+        return sorted_doc_ids.tolist()[:top_k], sorted_scores.tolist()[:top_k]
+    
+    async def _run_pagerank_igraph_chunk(self, reset_prob_chunk):
+        """
+        Run the PPR algorithm on a chunk of the graph.  
+        @param reset_prob_chunk: a list of numpy arrays, each representing the PPR weights for a chunk of the graph    
+        @return: a list of numpy arrays, each representing the PPR weights for the same chunk of the graph
+        """
+        pageranked_probabilities = []
+        #TODO: as a method in our NetworkXGraph class or directly use the networkx graph
+        # Transform the graph to igraph format 
+        igraph_ = ig.Graph.from_networkx(self.er_graph.graph)
+        igraph_.es['weight'] = [await self.er_graph.get_edge_weight(edge[0], edge[1]) for edge in list(self.er_graph.graph.edges())]
+
+        for reset_prob in tqdm(reset_prob_chunk, desc='pagerank chunk'):
+            pageranked_probs = igraph_.personalized_pagerank(vertices=range(len(self.er_graph.graph.nodes())), damping=self.config.damping, directed=False,
+                                                            weights='weight', reset=reset_prob, implementation='prpack')
+
+            pageranked_probabilities.append(np.array(pageranked_probs))
+        pageranked_probabilities = np.array(pageranked_probabilities)
+        
+        return pageranked_probabilities[0]
+    
+    async def retrieve_step(self, query: str, top_k: int):
+        ranks, scores = await self.rank_docs(query, top_k = top_k)
+        # Extract passages from the corpus based on the ranked document ids
+        retrieved_passages = [self.ordered_chunks[rank][1]["content"] for rank in ranks]
+
+        return retrieved_passages, scores
     
     def _extract_node(self):
         pass
@@ -494,7 +515,6 @@ class ERGraph(BaseGraph):
     async def _extract_eneity_from_query(self, query):
         entities = []
         try:
-        
             entities = await self.named_entity_recognition(query)
 
             entities = [processing_phrases(p) for p in entities]
@@ -502,38 +522,34 @@ class ERGraph(BaseGraph):
             self.logger.error('Error in Query NER')
 
         return entities
-
-    async def query(self, query: str, param: QueryConfig):
+    
+    def _get_few_shot_examples(self) -> list:
+        #TODO: implement the few shot examples
+        return []
+    
+    async def query(self, query: str):
         
        # Initial retrieval step
-        initial_passages, initial_scores, initial_logs = await self.retrieve_step(
-            query, self.chunks, param.top_k, dataset="hotpotqa"
-        )
-        iteration = 1
-        all_logs[iteration] = initial_logs
 
+        logger.info(f'Processing query: {query} at the first step')
+        retrieved_passages, scores = await self.retrieve_step(query, query_config.top_k)
         thoughts = []
-        passage_scores = {
-            passage: score for passage, score in zip(initial_passages, initial_scores)
-        }
-
+        passage_scores = {passage: score for passage, score in zip(retrieved_passages, scores)}
+        few_shot_examples = self._get_few_shot_examples()
         # Iterative refinement loop
-        for iteration in range(2, param.max_ir_steps + 1):
+        for iteration in range(2, query_config.max_ir_steps + 1):
+            logger.info("Entering the ir-cot iteration: {}".format(iteration))
             # Generate a new thought based on current passages and thoughts
-            new_thought = self.reason_step(
-                args.dataset, few_shot_samples, query, initial_passages[:args.top_k], thoughts, client
-            )
+            new_thought = await self.reason_step(few_shot_examples, query, retrieved_passages[ : query_config.top_k], thoughts)
             thoughts.append(new_thought)
             
             # Check if the thought contains the answer
             if 'So the answer is:' in new_thought:
                 break
             
+
             # Retrieve new passages based on the new thought
-            new_passages, new_scores, retrieval_logs = self.retrieve_step(
-                new_thought, corpus, args.top_k, rag, args.dataset
-            )
-            all_logs[iteration] = retrieval_logs
+            new_passages, new_scores = await self.retrieve_step(new_thought,  query_config.top_k)
             
             # Update passage scores
             for passage, score in zip(new_passages, new_scores):
@@ -546,4 +562,4 @@ class ERGraph(BaseGraph):
             sorted_passages = sorted(
                 passage_scores.items(), key=lambda item: item[1], reverse=True
             )
-            initial_passages, initial_scores = zip(*sorted_passages)
+            retrieved_passages, scores = zip(*sorted_passages)

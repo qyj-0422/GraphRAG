@@ -100,7 +100,11 @@ class NetworkXStorage(BaseGraphStorage):
         return (self._graph.degree(src_id) if self._graph.has_node(src_id) else 0) + (
             self._graph.degree(tgt_id) if self._graph.has_node(tgt_id) else 0
         )
-
+    async def get_edge_weight(
+        self, source_node_id: str, target_node_id: str
+    ) -> Union[float, None]:
+        edge_data =  self._graph.edges.get((source_node_id, target_node_id))
+        return edge_data.get("weight") if edge_data is not None else None
     async def get_edge(
         self, source_node_id: str, target_node_id: str
     ) -> Union[dict, None]:

@@ -26,4 +26,7 @@ class QueryConfig(YamlModel):
     global_special_community_map_llm_kwargs: dict = field(
         default_factory=lambda: {"response_format": {"type": "json_object"}}
     )
+
+    # For IR-COT
+    max_ir_steps: int = 2
 query_config = QueryConfig()
