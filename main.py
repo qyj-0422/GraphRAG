@@ -8,6 +8,7 @@ from shutil import copyfile
 from Data.QueryDataset import RAGQueryDataset
 import pandas as pd
 from Core.Utils.Evaluation import Evaluator
+from tqdm import tqdm
 
 
 
@@ -33,12 +34,14 @@ def wrapper_query(query_dataset, digimon, result_dir):
 
     dataset_len = len(query_dataset)
     dataset_len = 10
-    
-    for _, i in enumerate(range(dataset_len)):
-        query = query_dataset[i]
-        res = asyncio.run(digimon.query(query["question"]))
-        query["output"] = res
-        all_res.append(query)
+
+    with tqdm(total=len(query_dataset), desc="Processing queries") as pbar:
+        for _, i in enumerate(range(dataset_len)):
+            query = query_dataset[i]
+            res = asyncio.run(digimon.query(query["question"]))
+            query["output"] = res
+            all_res.append(query)
+            pbar.update(1)
 
     all_res_df = pd.DataFrame(all_res)
     save_path = os.path.join(result_dir, "results.json")
