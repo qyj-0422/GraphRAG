@@ -1,0 +1,18 @@
+2025-06-03 00:59:44.249 | INFO     | __main__:<module>:261 - existing graph read successfully，graph have 10777 nodes
+2025-06-03 00:59:54.189 | INFO     | __main__:build_vdb_from_graph:118 - Building VDB from existing graph...
+2025-06-03 00:59:54.189 | INFO     | __main__:build_graph:57 - Using pre-existing graph, skipping build phase
+2025-06-03 00:59:54.189 | INFO     | __main__:build_graph:61 - ✅ Graph ready for VDB construction
+2025-06-03 00:59:54.189 | INFO     | Core.Index.BaseIndex:build_index:13 - Starting insert elements of the given graph into vector database
+2025-06-03 00:59:54.192 | INFO     | Core.Index.BaseIndex:build_index:25 - Building index for input elements
+2025-06-03 00:59:54.193 | INFO     | Core.Index.VectorIndex:_update_index:65 - refresh index size is 0
+2025-06-03 00:59:54.204 | INFO     | Core.Index.BaseIndex:build_index:28 - Index successfully built and stored.
+2025-06-03 00:59:54.204 | INFO     | Core.Index.BaseIndex:build_index:29 - ✅ Finished starting insert entities of the given graph into vector database
+2025-06-03 00:59:54.204 | INFO     | __main__:build_vdb_from_graph:134 - ✅ Entity VDB built successfully
+2025-06-03 00:59:54.204 | INFO     | Core.Index.BaseIndex:build_index:13 - Starting insert elements of the given graph into vector database
+2025-06-03 00:59:54.205 | INFO     | Core.Index.BaseIndex:build_index:25 - Building index for input elements
+2025-06-03 00:59:54.206 | INFO     | Core.Index.VectorIndex:_update_index:65 - refresh index size is 0
+2025-06-03 00:59:54.217 | INFO     | Core.Index.BaseIndex:build_index:28 - Index successfully built and stored.
+2025-06-03 00:59:54.217 | INFO     | Core.Index.BaseIndex:build_index:29 - ✅ Finished starting insert entities of the given graph into vector database
+2025-06-03 00:59:54.217 | INFO     | __main__:build_vdb_from_graph:147 - ✅ Relation VDB built successfully
+2025-06-03 00:59:54.217 | INFO     | Core.GraphRAG:_build_retriever_context:176 - Building retriever context for the current execution
+2025-06-03 00:59:54.217 | INFO     | __main__:build_vdb_from_graph:175 - ✅ VDB construction completed

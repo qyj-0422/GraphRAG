@@ -1,0 +1,20 @@
+####################################################################################################
+ _____ _____ _____ _____ __  __  ____  _   _ 
+|  __ \_   _/ ____|_   _|  \/  |/ __ \| \ | |
+| |  | || || |  __  | | | \  / | |  | |  \| |
+| |  | || || | |_ | | | | |\/| | |  | | . ` |
+| |__| || || |__| |_| |_| |  | | |__| | |\  |
+|_____/_____\_____|_____|_|  |_|\____/|_| \_|
+                                             
+                                             
+
+╔════════════════════════════════════════════════════════════════════════════════════════════════════════╗
+║ Welcome to DIGIMON: Deep Analysis of Graph-Based RAG Systems.                                          ║
+║                                                                                                        ║
+║ Unlock advanced insights with our comprehensive tool for evaluating and optimizing RAG models.         ║
+║                                                                                                        ║
+║ You can freely combine any graph-based RAG algorithms you desire. We hope this will be helpful to you! ║
+╚════════════════════════════════════════════════════════════════════════════════════════════════════════╝
+####################################################################################################
+The path ./graph_vdb_output/my_graph_vdb/entities_vdb does not exist.
+The path ./graph_vdb_output/my_graph_vdb/relations_vdb does not exist.

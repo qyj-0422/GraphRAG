@@ -21,4 +21,4 @@ data_root:  ./Data # Root directory for data
 
 working_dir: ./ # Result directory for the experiment
 exp_name:  Test_Experiment # Experiment name
-# 
+use_existing_graph: True

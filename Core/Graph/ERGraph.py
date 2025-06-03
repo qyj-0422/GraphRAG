@@ -138,7 +138,12 @@ class ERGraph(BaseGraph):
         maybe_nodes, maybe_edges = defaultdict(list), defaultdict(list)
 
         for _entity in entities:
-            entity_name = clean_str(_entity)
+            if isinstance(_entity, dict) and 'entity' in _entity:
+                entity_name = clean_str(_entity['entity'])
+            elif isinstance(_entity, dict) and 'entity' not in _entity:
+                continue
+            else:
+                entity_name = clean_str(_entity)
             if entity_name == '':
                 logger.warning(f"entity name is not valid, entity is: {_entity}, so skip it")
                 continue
