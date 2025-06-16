@@ -7,7 +7,6 @@ from Core.Graph.PassageGraph import PassageGraph
 from Core.Graph.TreeGraph import TreeGraph
 from Core.Graph.TreeGraphBalanced import TreeGraphBalanced
 from Core.Graph.RKGraph import RKGraph
-from Core.Graph.ExistingGraph import ExistingGraph
 
 
 
@@ -18,8 +17,7 @@ class GraphFactory():
             "rkg_graph": self._create_rkg_graph,
             "tree_graph": self._create_tree_graph,
             "tree_graph_balanced": self._create_tree_graph_balanced,
-            "passage_graph": self._crease_passage_graph,
-            "existing_graph": self._create_existing_graph
+            "passage_graph": self._crease_passage_graph
         }
 
 
@@ -48,10 +46,6 @@ class GraphFactory():
     @staticmethod
     def _crease_passage_graph(config, **kwargs):
         return PassageGraph(config.graph, **kwargs)
-
-    @staticmethod
-    def _create_existing_graph(config, **kwargs):
-        return ExistingGraph(config.graph, **kwargs)
 
 
 get_graph = GraphFactory().get_graph
