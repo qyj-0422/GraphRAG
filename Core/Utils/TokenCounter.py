@@ -89,7 +89,8 @@ TOKEN_COSTS = {
     "doubao-pro-128k-240515": {"prompt": 0.0007, "completion": 0.0013},
     "llama3-70b-llama3-70b-instruct": {"prompt": 0.0, "completion": 0.0},
     "llama3-8b-llama3-8b-instruct": {"prompt": 0.0, "completion": 0.0},
-    "Pro/Qwen/Qwen2-1.5B-Instruct": {"prompt": 0.0, "completion": 0.0}
+    "Pro/Qwen/Qwen2-1.5B-Instruct": {"prompt": 0.0, "completion": 0.0},
+    "Qwen/Qwen3-8B": {"prompt": 0.0, "completion": 0.0}
 }
 
 

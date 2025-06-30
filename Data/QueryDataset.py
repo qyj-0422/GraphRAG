@@ -1,12 +1,14 @@
 import pandas as pd
 from torch.utils.data import Dataset
 import os
+import pickle as pkl
 
 class RAGQueryDataset(Dataset):
     def __init__(self,data_dir):
         super().__init__()
       
         self.corpus_path = os.path.join(data_dir, "Corpus.json")
+        self.corpus_pkl_path = os.path.join(data_dir, "Corpus.pkl")
         self.qa_path = os.path.join(data_dir, "Question.json")
         self.dataset = pd.read_json(self.qa_path, lines=True, orient="records")
 
@@ -22,7 +24,12 @@ class RAGQueryDataset(Dataset):
                 }
             )
         return corpus_list
-
+    
+    def get_pkl_corpus(self):
+        with open(self.corpus_pkl_path, "rb") as f:
+            corpus_list = pkl.load(f)
+        return corpus_list
+    
     def __len__(self):
         return len(self.dataset)
 

@@ -1,7 +1,7 @@
 llm:
   api_type: "openai" # or openai
   base_url: 'https://api.siliconflow.cn/v1'
-  model: "Pro/Qwen/Qwen2-1.5B-Instruct"
+  model: "Qwen/Qwen3-8B"
   api_key: "sk-vmkqhjouuywgbrrbzpfissmkfpyxfkiidtmgcsrpsaorwyew"  # Not required for local models
 
 embedding:
@@ -19,6 +19,6 @@ data_root:  ./Data # Root directory for data
 
 
 
-working_dir: ./ # Result directory for the experiment
+working_dir: ./working_dir # Result directory for the experiment
 exp_name:  Test_Experiment # Experiment name
 use_existing_graph: True

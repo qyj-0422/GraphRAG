@@ -13,4 +13,4 @@ module load anaconda
 eval "$(conda shell.bash hook)"
 conda activate digimon
 
-python main.py -opt Option/Method/Dalk.yaml -dataset_name legal
+python main.py -opt Option/Method/Dalk.yaml -dataset_name mix
