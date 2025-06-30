@@ -5,6 +5,7 @@ from Core.Common.Logger import logger
 from Core.Schema.ChunkSchema import TextChunk
 from Core.Storage.ChunkKVStorage import ChunkKVStorage
 from typing import List, Union
+from Core.Chunk.doc2chunk import build_doc2chunk_mapping
 
 
 class DocChunk:
@@ -69,7 +70,8 @@ class DocChunk:
             for chunk in chunks:
                 chunk["chunk_id"] = mdhash_id(chunk["content"], prefix="chunk-")
                 await self._chunk.upsert(chunk["chunk_id"], TextChunk(**chunk))
-
+            build_doc2chunk_mapping(chunks)
+            logger.info("✅ Finished build doc2chunk mapping")
             await self._chunk.persist()
         logger.info("✅ Finished the chunking stage")
 

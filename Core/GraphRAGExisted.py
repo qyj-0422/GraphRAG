@@ -14,6 +14,8 @@ from Core.Storage.NameSpace import Workspace
 from Core.Community.ClusterFactory import get_community
 from Core.Storage.PickleBlobStorage import PickleBlobStorage
 from colorama import Fore, Style, init
+from Core.Graph.graph2graph import build_detailed_graph
+
 
 
 init(autoreset=True)  # Initialize colorama and reset color after each print
@@ -226,13 +228,14 @@ class GraphRAG(ContextMixin, BaseModel):
         
         # Step 1.  Chunking Stage
         self.time_manager.start_stage()
-        await self.doc_chunk.build_chunks(docs)
+        await self.doc_chunk.build_chunks(docs, force=False)
         self._update_costs_info("Chunking")
         
-        
         # Step 2. Building Graph Stage
-        await self.graph.build_graph(await self.doc_chunk.get_chunks(), self.config.graph.force)
-        self._update_costs_info("Build Graph")
+        # await self.graph.build_graph(await self.doc_chunk.get_chunks(), self.config.graph.force)
+        # self._update_costs_info("Build Graph")
+        await build_detailed_graph()
+        logger.info("✅ Finished building the graph with DocChunk and existed graph")
         
         # Index building Stage (Data-driven content should be pre-built offline to ensure efficient online query performance.)
         
@@ -292,22 +295,4 @@ class GraphRAG(ContextMixin, BaseModel):
         response = await self._querier.query(query)
 
         return response
-        
 
-
-   
-
-    
-    
-   
-      
-        
-
-   
-
-
-
-   
-
-  
-  

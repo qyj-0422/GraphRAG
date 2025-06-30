@@ -13,7 +13,7 @@ class DalkQuery(BaseQuery):
         # import pdb
         # pdb.set_trace()
         path_str = [(path[0]["src_id"]
-                     + ("->" + e["content"] + "-> " + e["tgt_id"]) for edge in path)
+                     + ("->" + e["content"] + "-> " + e["tgt_id"]) for e in path)
                      for path in path_list]
         context = DALK_RERANK_PROMPT.format(graph=path_str, question=query)
 
@@ -23,7 +23,7 @@ class DalkQuery(BaseQuery):
         # import pdb
         # pdb.set_trace()
         if nei_list is None: return ""
-        nei_str_list = ["->".join([e["src_id"], e["content"], e["tgt_id"]])
+        nei_str_list = ["->".join([e["src_id"], e["relation_name"], e["tgt_id"]])
                         for e in nei_list]
         if len(nei_str_list) > 5:
             nei_str_list = nei_str_list[:-5]

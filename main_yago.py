@@ -1,4 +1,4 @@
-from Core.GraphRAG import GraphRAG
+from Core.GraphRAGExisted import GraphRAG
 from Option.Config2 import Config
 import argparse
 import os
@@ -33,7 +33,7 @@ def wrapper_query(query_dataset, digimon, result_dir):
     all_res = []
 
     dataset_len = len(query_dataset)
-    dataset_len = 10
+    dataset_len = 10 # 测试运行，只跑前10个query
 
     with tqdm(total=len(query_dataset), desc="Processing queries") as pbar:
         for _, i in enumerate(range(dataset_len)):
@@ -75,8 +75,8 @@ if __name__ == "__main__":
     query_dataset = RAGQueryDataset(
         data_dir=os.path.join(opt.data_root, opt.dataset_name)
     )
-    corpus = query_dataset.get_corpus()
-    corpus = corpus[:5] # 截取前5，方便调试
+    corpus = query_dataset.get_pkl_corpus()
+    # corpus = corpus[:10] # 截取前10，方便调试
 
     asyncio.run(digimon.insert(corpus))
 

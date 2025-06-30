@@ -1,0 +1,50 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+        {
+            "python": "/data/home/aaronqian/miniforge3/envs/digimon/bin/python",
+            "name": "Current File Debugger",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "${file}",
+            "console": "integratedTerminal",
+            "justMyCode": true
+        },
+        {
+            "python": "/data/home/aaronqian/miniforge3/envs/digimon/bin/python",
+            "name": "main_yago Debugger",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "/data/home/aaronqian/workingdir/GraphRAG/main_yago.py",
+            "console": "integratedTerminal",
+            "justMyCode": true,
+            "args": [
+                "-opt",
+                "Option/Method/Dalk.yaml",
+                "-dataset_name",
+                "yago"
+            ],
+        },
+        {
+            "python": "/data/home/aaronqian/miniforge3/envs/digimon/bin/python",
+            "name": "GraphRAG Debugger",
+            "type": "debugpy",
+            "request": "launch",
+            "env": {
+                "CUDA_VISIBLE_DEVICES": "1,2"
+            },
+            "program": "/data/home/aaronqian/workingdir/GraphRAG/main.py",
+            "console": "integratedTerminal",
+            "args": [
+                "-opt",
+                "Option/Method/Dalk.yaml",
+                "-dataset_name",
+                "legal"
+            ],
+            "justMyCode": true
+        }
+    ]
+}
