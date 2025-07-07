@@ -33,7 +33,7 @@ def wrapper_query(query_dataset, digimon, result_dir):
     all_res = []
 
     dataset_len = len(query_dataset)
-    dataset_len = 10 # 测试运行，只跑前10个query
+    # dataset_len = 10 # 测试运行，只跑前10个query
 
     with tqdm(total=len(query_dataset), desc="Processing queries") as pbar:
         for _, i in enumerate(range(dataset_len)):
