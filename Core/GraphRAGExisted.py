@@ -14,7 +14,7 @@ from Core.Storage.NameSpace import Workspace
 from Core.Community.ClusterFactory import get_community
 from Core.Storage.PickleBlobStorage import PickleBlobStorage
 from colorama import Fore, Style, init
-from Core.Graph.graph2graph import build_detailed_graph
+from Dataloader.KGAdapter import KGAdapter
 
 
 
@@ -224,17 +224,20 @@ class GraphRAG(ContextMixin, BaseModel):
         Args:
             docs (Union[str, list[[Any]]): A list of documents to be processed and inserted into the Graph RAG pipeline.
         """
+        kg_adapter = KGAdapter()
+        kg_adapter.kg2doc()
 
-        
         # Step 1.  Chunking Stage
         self.time_manager.start_stage()
-        await self.doc_chunk.build_chunks(docs, force=False)
+        await self.doc_chunk.build_chunks(docs, force=False) # 这一步中要调用doc2chunk
+        kg_adapter.kg2chunk()
         self._update_costs_info("Chunking")
         
         # Step 2. Building Graph Stage
         # await self.graph.build_graph(await self.doc_chunk.get_chunks(), self.config.graph.force)
         # self._update_costs_info("Build Graph")
-        await build_detailed_graph()
+        
+        await kg_adapter.build_detailed_graph()
         logger.info("✅ Finished building the graph with DocChunk and existed graph")
         
         # Index building Stage (Data-driven content should be pre-built offline to ensure efficient online query performance.)
