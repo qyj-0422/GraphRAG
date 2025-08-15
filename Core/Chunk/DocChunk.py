@@ -5,7 +5,7 @@ from Core.Common.Logger import logger
 from Core.Schema.ChunkSchema import TextChunk
 from Core.Storage.ChunkKVStorage import ChunkKVStorage
 from typing import List, Union
-from Core.Chunk.doc2chunk import build_doc2chunk_mapping
+from Dataloader.KGAdapter import KGAdapter
 
 
 class DocChunk:
@@ -26,7 +26,7 @@ class DocChunk:
 
     async def build_chunks(self, docs: Union[str, List[str]], force=True):
         logger.info("Starting chunk the given documents")
-  
+        
         is_exist = await self._load_chunk(force)
         if not is_exist or force:
 
@@ -70,7 +70,9 @@ class DocChunk:
             for chunk in chunks:
                 chunk["chunk_id"] = mdhash_id(chunk["content"], prefix="chunk-")
                 await self._chunk.upsert(chunk["chunk_id"], TextChunk(**chunk))
-            build_doc2chunk_mapping(chunks)
+            kg_adapter = KGAdapter()
+            kg_adapter.doc2chunk(chunks)
+            # build_doc2chunk_mapping(chunks)
             logger.info("✅ Finished build doc2chunk mapping")
             await self._chunk.persist()
         logger.info("✅ Finished the chunking stage")
