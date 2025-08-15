@@ -1,4 +1,5 @@
 __pycache__/
 ./Test_Experiment/*
 /Data/
-./working_dir/*
+working_dir/*
+*.pyc

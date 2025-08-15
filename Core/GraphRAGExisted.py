@@ -234,7 +234,8 @@ class GraphRAG(ContextMixin, BaseModel):
         # Step 2. Building Graph Stage
         # await self.graph.build_graph(await self.doc_chunk.get_chunks(), self.config.graph.force)
         # self._update_costs_info("Build Graph")
-        await build_detailed_graph()
+        
+        # await build_detailed_graph()
         logger.info("✅ Finished building the graph with DocChunk and existed graph")
         
         # Index building Stage (Data-driven content should be pre-built offline to ensure efficient online query performance.)
